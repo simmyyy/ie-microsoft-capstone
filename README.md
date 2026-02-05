@@ -1,5 +1,42 @@
 # GBIF Occurrence Data — README
 
+## How to execute this project
+
+### Setup (Python virtual environment)
+
+From the repo root:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+If you don’t have Jupyter installed already, install it:
+
+```bash
+pip install jupyterlab
+```
+
+Then start Jupyter:
+
+```bash
+jupyter lab
+```
+
+### Notebooks (recommended order)
+
+- **`gbif_eda.ipynb`**: GBIF download/caching + EDA (missingness, time trends, licenses/provenance, monthly counts, Europe country counts, threatened species).
+- **`oil_company_screening.ipynb`**: TNFD-style screening demo that combines GBIF occurrences with industrial assets (OpenStreetMap/Overpass), proximity metrics, and interactive mapping.
+- **`biodiversity_gbif_profesor_demo.ipynb`**: additional demo notebook.
+
+### Project structure (high level)
+
+- **`data/`**: cached GBIF downloads (`.jsonl.gz`), derived CSVs, OSM asset cache, and exported HTML maps.
+- **`pictures/`**: exported figures used in this README.
+- **`requirements.txt`**: Python dependencies.
+
 ## Overview: what GBIF data is, how it’s published, and licensing
 
 **GBIF (Global Biodiversity Information Facility)** is an open infrastructure that aggregates biodiversity data published by many organizations worldwide. The most common data product you’ll see in GBIF is an **occurrence record** — an observation or specimen record describing **what** was observed/collected, **where**, and **when** (plus lots of metadata).
@@ -57,6 +94,74 @@ About **species richness (unique species)**:
 Example of “prompting” with `limit=0`: compare **record volumes by country** (Europe example; `country=...` filter):
 
 ![GBIF record counts by European country (top 25)](pictures/gbif_europe_country_counts_top25.png)
+
+### Threatened species (IUCN Red List) in GBIF records
+
+Many GBIF occurrence records include an `iucnRedListCategory` field. This lets you quickly flag **threatened** taxa in your slice.
+
+Common IUCN category codes:
+- **LC**: Least Concern
+- **NT**: Near Threatened
+- **VU**: Vulnerable
+- **EN**: Endangered
+- **CR**: Critically Endangered
+- **EW**: Extinct in the Wild
+- **EX**: Extinct
+- **DD**: Data Deficient
+
+Typical “threatened” set used in quick analyses: **VU / EN / CR** (sometimes also EW / EX).
+
+Example from the Madrid (~30 km) slice in `gbif_eda.ipynb` (counts of records by `iucnRedListCategory`):
+- **LC**: 1434  
+- **MISSING**: 462  
+- **NT**: 53  
+- **EN**: 25  
+- **VU**: 25  
+- **DD**: 1  
+
+From that same slice, the notebook flagged **50 threatened records** across **6 unique threatened species**, e.g.:
+- `Oryctolagus cuniculus` (**EN**)
+- `Aquila adalberti` (**EN**)
+- `Macrochloa tenacissima` (**VU**)
+
+#### Example threatened species in Madrid area: European rabbit
+
+![Oryctolagus cuniculus (European rabbit)](pictures/oryctolagus_cuniculus_european_rabbit.png)
+
+`Oryctolagus cuniculus` (European rabbit) — **Near threatened**, population **decreasing**.  
+*(Status can vary by assessment scope/date; verify against the current IUCN assessment for your use case.)*
+
+> Note: “Threatened” (IUCN) is not the same as “protected” (legal protection). Legal protection depends on jurisdiction (CITES/EU/national lists) and requires joining an external list to GBIF (ideally via `speciesKey`).
+
+### Overlaying GBIF occurrences with industrial assets from OpenStreetMap (Overpass API)
+
+In addition to biodiversity occurrences (GBIF), you can enrich the analysis with **nearby industrial assets** from **OpenStreetMap** via the **Overpass API**—for example:
+- `man_made=storage_tank` (storage tanks)
+- `landuse=industrial`, `industrial=*`, `power=*`, and other site/plant infrastructure tags
+
+The notebook `oil_company_screening.ipynb` demonstrates a workflow where we:
+- query OSM/Overpass for industrial features in the same city/radius area,
+- extract their **coordinates** and basic metadata,
+- plot them together with GBIF occurrence points on an interactive `folium` map,
+- export the result to an HTML file you can open locally:
+  - `data/oil_screening_map_madrid_spain_r30km.html`
+
+Screenshot preview:
+
+![OSM industrial assets + GBIF occurrences (Madrid ~30 km)](pictures/oil_screening_map_madrid_spain_r30km_screenshot.png)
+
+### Land cover composition from OpenStreetMap (proxy)
+
+You can also use OpenStreetMap as a **land-cover proxy** by querying polygon features such as:
+- `landuse=*`
+- `natural=*`
+- `leisure=*`
+
+In `oil_company_screening.ipynb` we fetch these polygons via Overpass, map them into coarse classes (e.g., `urban`, `agriculture`, `forest`, …), and compute an **approximate % area** composition within the city-radius bounding box. This is useful for adding **habitat context** when interpreting GBIF occurrences and industrial-asset proximity.
+
+Example (Madrid ~30 km; OSM proxy):
+
+![Land cover composition (OSM proxy) — Madrid (~30 km)](pictures/landcover_composition_madrid_spain_r30km.png)
 
 ### How GBIF data is “published”
 
