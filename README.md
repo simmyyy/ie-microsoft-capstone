@@ -4,6 +4,60 @@
 
 **GBIF (Global Biodiversity Information Facility)** is an open infrastructure that aggregates biodiversity data published by many organizations worldwide. The most common data product you’ll see in GBIF is an **occurrence record** — an observation or specimen record describing **what** was observed/collected, **where**, and **when** (plus lots of metadata).
 
+### Important caveat: GBIF occurrence counts can “cliff drop”
+
+When you query GBIF month-by-month (e.g. using `eventDate` windows and the API `count`), you may observe **sudden step changes** in the number of records returned for a region — even for **all taxa**.
+
+This is **usually not evidence of a real ecological collapse**. In most cases it reflects **data availability and publishing/processing effects**, for example:
+- a dominant **publisher/dataset** changes what it publishes into GBIF (pause, delay, scope change)
+- **ingestion/processing cadence** (batch updates, backfills)
+- shifts in **reporting effort** (platform usage, observer activity)
+
+Example from this repo (Madrid ~30 km): “all taxa” and a single species show a sharp drop around 2025-01:
+
+![Monthly GBIF counts: all taxa vs Pica pica](pictures/gbif_monthly_drop_all_taxa_vs_pica_pica_eventDate.png)
+
+**Takeaway**: treat GBIF occurrence counts as a signal of *records in GBIF*, not a direct proxy for *population size*. Always validate with provenance (`datasetKey`, `institutionCode`, `references`) and, if needed, compare `eventDate` (observed) vs `lastInterpreted` (processed).
+
+### Fast “prompting” for occurrences: `limit=0` counts (and richness estimates)
+
+You don’t need to download rows to answer basic scoping questions like:
+- **How many occurrence records exist** for a given filter set?
+- **How does record volume compare** across regions/countries/time windows?
+
+GBIF’s Occurrence Search API returns an exact **`count`** for a query even when `limit=0` (i.e., return no rows, only metadata).
+
+#### What does “record count” mean in GBIF?
+
+- **1 record = 1 occurrence record** (one published observation/specimen/event entry), not an aggregated statistic.
+- `resp["count"] = N` means **N occurrence records** match your filters (country/bbox/taxon/date/etc.).
+- This is **not** “number of animals/plants”. Repeated observations, duplicates, and reporting effort can strongly affect counts.
+- Some records include **`individualCount`**, but it is often missing/inconsistent; GBIF’s `count` does **not** sum `individualCount`.
+
+Practical example: count occurrences by **country** (ISO2), optionally restricted to records with coordinates and/or a time window:
+
+```python
+from pygbif import occurrences
+
+resp = occurrences.search(
+    country="ES",          # Spain (ISO2)
+    hasCoordinate=True,    # optional
+    eventDate=None,        # or "2024-01-01,2024-12-31"
+    limit=0,               # count-only
+)
+total_records = resp["count"]
+```
+
+About **species richness (unique species)**:
+- A pure `count` does **not** directly tell you richness.
+- You can estimate richness by either:
+  - downloading occurrences for the slice and counting unique `species`/`speciesKey` locally (exact for the downloaded set), or
+  - using GBIF **facets** on `speciesKey` (useful for exploration, but it can be incomplete if you don’t retrieve all facet buckets).
+
+Example of “prompting” with `limit=0`: compare **record volumes by country** (Europe example; `country=...` filter):
+
+![GBIF record counts by European country (top 25)](pictures/gbif_europe_country_counts_top25.png)
+
 ### How GBIF data is “published”
 
 - **Publishers** (museums, research institutes, citizen science platforms, etc.) publish datasets to GBIF.
