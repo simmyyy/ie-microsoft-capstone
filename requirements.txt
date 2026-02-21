@@ -32,3 +32,12 @@ ipywidgets>=8.1.0
 # Interactive maps (basemap) + HTTP client for OSM Overpass download
 folium>=0.16.0
 requests>=2.31.0
+
+python-dotenv
+
+# AWS S3 access (used in gbif_etl_job.ipynb)
+boto3
+s3fs
+
+# H3 spatial indexing (used in gbif_bronze_to_silver.ipynb)
+h3>=4.0.0
