@@ -1,6 +1,6 @@
 # GBIF Biodiversity ETL Pipeline
 
-This directory contains three notebooks that form a **Bronze → Silver → Gold** data lakehouse pipeline for GBIF (Global Biodiversity Information Facility) species occurrence data. Raw exports are downloaded from the GBIF API, cleaned, spatially indexed, and aggregated into ready-to-query cell-level biodiversity metrics stored in S3.
+This directory contains notebooks that form a **Bronze → Silver → Gold** data lakehouse pipeline for GBIF (Global Biodiversity Information Facility) species occurrence data. Raw exports are downloaded from the GBIF API, cleaned, spatially indexed, and aggregated into ready-to-query cell-level biodiversity metrics stored in S3. Additional pipelines produce species dimension tables, H3–species mappings, and IUCN Red List profiles for the Streamlit Biodiversity Explorer app.
 
 ---
 
@@ -12,12 +12,17 @@ This directory contains three notebooks that form a **Bronze → Silver → Gold
    - [Bronze – `gbif_etl_job.ipynb`](#bronze--gbif_etl_jobipynb)
    - [Silver – `gbif_bronze_to_silver.ipynb`](#silver--gbif_bronze_to_silveripynb)
    - [Gold – `gbif_silver_to_gold.ipynb`](#gold--gbif_silver_to_goldipynb)
-4. [H3 spatial indexing](#h3-spatial-indexing)
-5. [Key enrichment columns](#key-enrichment-columns)
-6. [Gold metrics reference](#gold-metrics-reference)
-7. [Running the pipeline](#running-the-pipeline)
-8. [Credentials & AWS setup](#credentials--aws-setup)
-9. [Performance notes](#performance-notes)
+   - [Gold – `gbif_silver_to_gold_dim.ipynb`](#gold--gbif_silver_to_gold_dimipynb)
+4. [IUCN enrichment pipeline](#iucn-enrichment-pipeline)
+   - [Silver – `iucn_species_enrichment.ipynb`](#silver--iucn_species_enrichmentipynb)
+   - [Gold – `iucn_silver_to_gold.ipynb`](#gold--iucn_silver_to_goldipynb)
+5. [Streamlit Biodiversity Explorer](#streamlit-biodiversity-explorer)
+6. [H3 spatial indexing](#h3-spatial-indexing)
+7. [Key enrichment columns](#key-enrichment-columns)
+8. [Gold metrics reference](#gold-metrics-reference)
+9. [Running the pipeline](#running-the-pipeline)
+10. [Credentials & AWS setup](#credentials--aws-setup)
+11. [Performance notes](#performance-notes)
 
 ---
 
@@ -38,16 +43,34 @@ GBIF API
 │  SILVER  s3://ie-datalake/silver/gbif/country=XX/year=YYYY/ │
 │  Clean coordinates, h3_9 / h3_8 / h3_7 / h3_6 columns      │
 └────────────────────────────┬────────────────────────────────┘
-                             │  cell-level aggregation
+                             │
+         ┌───────────────────┼───────────────────┐
+         │  cell-level       │  species-level     │
+         │  aggregation      │  dimension + H3    │
+         ▼                   ▼                    │
+┌─────────────────────┐  ┌─────────────────────────────────────────────┐
+│  GOLD               │  │  GOLD                                        │
+│  gbif_cell_metrics  │  │  gbif_species_dim + gbif_species_h3_mapping  │
+│  ~20 metrics/cell   │  │  Species lookup + per-species occurrence map │
+└─────────────────────┘  └─────────────────────────────────────────────┘
+
+IUCN Red List API
+   │
+   │  Per-species assessment (rationale, habitat, threats…)
+   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  SILVER  s3://ie-datalake/silver/iucn_species_profiles/.../             │
+│  species_profiles.json (from iucn_species_enrichment.ipynb)              │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │  Parquet conversion
                              ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  GOLD  s3://ie-datalake/gold/gbif_cell_metrics/country=XX/year=YYYY/         │
-│        h3_resolution=N/                                                       │
-│  One row per (country, year, h3_resolution, h3_index) with ~20 metrics       │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  GOLD  s3://ie-datalake/gold/iucn_species_profiles/country=XX/year=YYYY/│
+│  Rich IUCN profiles for threatened species (Streamlit Species map tab) │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-All layers are stored as **snappy-compressed Parquet**, partitioned by `country` and `year` (and additionally by `h3_resolution` in gold). Both partition keys are also embedded as regular columns inside each file so queries without a partition filter still work.
+All layers are stored as **snappy-compressed Parquet**, partitioned by `country` and `year` (and additionally by `h3_resolution` in gold where applicable). Both partition keys are also embedded as regular columns inside each file so queries without a partition filter still work.
 
 ---
 
@@ -163,6 +186,100 @@ s3://ie-datalake/silver/gbif/country={XX}/year={YYYY}/part-XXXXX.parquet
 ```
 s3://ie-datalake/gold/gbif_cell_metrics/country={XX}/year={YYYY}/h3_resolution={N}/part-XXXXX.parquet
 ```
+
+---
+
+### Gold – `gbif_silver_to_gold_dim.ipynb`
+
+**Purpose:** Build species dimension and H3–species mapping tables for the Streamlit app (Analysis tab, Species map tab).
+
+| Table | S3 path | Description |
+|-------|---------|-------------|
+| **gbif_species_dim** | `s3://ie-datalake/gold/gbif_species_dim/country=XX/year=YYYY/` | One row per species per (country, year): taxon_key, species_name, occurrence_count, is_threatened, is_invasive |
+| **gbif_species_h3_mapping** | `s3://ie-datalake/gold/gbif_species_h3_mapping/country=XX/year=YYYY/h3_resolution=N/` | Mapping: which species occur in which H3 cell – for fast region lookups and per-species maps |
+
+**Key configuration parameters:**
+
+| Parameter | Description |
+|---|---|
+| `COUNTRIES` / `YEAR_START` / `YEAR_END` | Scope of data to process |
+| `H3_RESOLUTIONS` | Resolutions to build: `[9, 8, 7, 6]` |
+
+**Pipeline functions:**
+
+| Function | What it does |
+|---|---|
+| `build_species_dim(df, country, year)` | Aggregates by taxon_key: occurrence_count, is_threatened, is_invasive, species_name |
+| `build_h3_mapping(df, country, year, h3_resolution)` | Groups by (h3_index, taxon_key) with occurrence_count, is_threatened, is_invasive |
+
+**Output columns:**
+
+| Table | Columns |
+|---|---|
+| gbif_species_dim | taxon_key, species_name, occurrence_count, is_threatened, is_invasive, country, year |
+| gbif_species_h3_mapping | h3_index, taxon_key, occurrence_count, is_threatened, is_invasive, h3_resolution, country, year |
+
+**Required:** Silver GBIF layer must exist. Run `gbif_bronze_to_silver.ipynb` first.
+
+---
+
+## IUCN enrichment pipeline
+
+### Silver – `iucn_species_enrichment.ipynb`
+
+**Purpose:** Enrich threatened (and optionally invasive) species from the GBIF silver layer with full IUCN Red List assessments via the [IUCN Red List API v4](https://api.iucnredlist.org/api-docs/index.html).
+
+**Flow:**
+1. Reads unique threatened species (CR, EN, VU) from GBIF silver
+2. For each species: `GET /taxa/scientific_name` → `GET /assessment/{id}` to fetch full narrative (rationale, habitat, threats, conservation)
+3. Writes `species_profiles.json` to S3 silver and local `iucn_enrichment/`
+
+**Output locations:**
+
+| Location | Content |
+|----------|---------|
+| S3 `s3://ie-datalake/silver/iucn_species_profiles/country=XX/year=YYYY/` | species_profiles.json – array of enriched profiles |
+| Local `iucn_enrichment/species_profiles.json` | Same – ready for LLM/agentic pipeline |
+| Local `iucn_enrichment/iucn_cache.json` | API call cache (saves quota on re-runs) |
+
+**Note:** IUCN Red List covers *threatened species* (extinction risk). Invasive species often have LC/NE status → lower hit rate when querying IUCN for invasive-only lists.
+
+---
+
+### Gold – `iucn_silver_to_gold.ipynb`
+
+**Purpose:** Convert IUCN species profiles from JSON (silver) to Parquet (gold) for efficient querying in the Streamlit app.
+
+| Layer | S3 path |
+|-------|---------|
+| Silver in | `s3://ie-datalake/silver/iucn_species_profiles/country=XX/year=YYYY/species_profiles.json` |
+| Gold out | `s3://ie-datalake/gold/iucn_species_profiles/country=XX/year=YYYY/` |
+
+**Key columns in gold:** scientific_name, rationale, habitat_ecology, population, range_description, threats_text, conservation_text, iucn_category, iucn_category_description, population_trend.
+
+---
+
+## Streamlit Biodiversity Explorer
+
+The app (`streamlit/app.py`) provides three tabs:
+
+| Tab | Description |
+|-----|--------------|
+| **Map** | Folium map with H3 hex overlay; click hexes to add to selection; top-N or viewport snapshot modes |
+| **Analysis** | Species per selected hex, threatened vs not, IUCN rationale for threatened species |
+| **Species map** | Search any species by name → Folium map of H3 cells where it occurs; IUCN panel when threatened |
+
+**Species map tab (new):**
+- Search by partial name (e.g. `Cortaderia`, `invasive`, `Abies pinsapo`)
+- Uses `gbif_species_dim` (species lookup) + `gbif_species_h3_mapping` (occurrence hexes)
+- H3 resolution selector (6, 7, 8, 9) – finer resolutions show more detail
+- Fallback: if no data at selected resolution, tries others automatically
+- IUCN panel for threatened species: rationale, habitat, population, threats, conservation (from `iucn_species_profiles` gold)
+- Map uses `returned_objects=[]` so pan/zoom does not trigger reruns
+
+**Required gold tables:** `gbif_cell_metrics`, `gbif_species_dim`, `gbif_species_h3_mapping`, `iucn_species_profiles` (for IUCN panel).
+
+**Run:** `streamlit run streamlit/app.py` (from repo root).
 
 ---
 
@@ -284,13 +401,35 @@ DQI = mean of available components:
 
 ## Running the pipeline
 
+### Core GBIF pipeline
+
 Run the notebooks **in order**:
 
 ```
 1. gbif_etl_job.ipynb          →  Bronze (downloads from GBIF, ~hours for large countries)
 2. gbif_bronze_to_silver.ipynb →  Silver (coordinate cleaning + H3, ~minutes)
-3. gbif_silver_to_gold.ipynb   →  Gold   (aggregation, ~minutes)
+3. gbif_silver_to_gold.ipynb   →  Gold   (cell metrics, ~minutes)
+4. gbif_silver_to_gold_dim.ipynb → Gold (species dim + H3 mapping, ~minutes)
 ```
+
+### IUCN enrichment (for Species map IUCN panel)
+
+```
+5. iucn_species_enrichment.ipynb → Silver (IUCN API → species_profiles.json)
+6. iucn_silver_to_gold.ipynb    → Gold   (JSON → Parquet)
+```
+
+**Note:** `iucn_species_enrichment` reads threatened species from GBIF silver. Run steps 1–2 first.
+
+### Streamlit app
+
+```
+streamlit run streamlit/app.py
+```
+
+Requires gold tables: `gbif_cell_metrics`, `gbif_species_dim`, `gbif_species_h3_mapping`. For IUCN panel in Analysis and Species map tabs, also run `iucn_silver_to_gold`.
+
+---
 
 Each notebook has a **Configuration cell at the top** – edit `COUNTRIES`, `YEAR_START`, and `YEAR_END` there before running. The cells below are self-contained and can be re-run safely: all writes use `existing_data_behavior="delete_matching"` so existing S3 partitions are overwritten cleanly.
 
@@ -318,6 +457,14 @@ GBIF_PWD=your_gbif_password
 GBIF_EMAIL=your_email@example.com
 ```
 
+### IUCN Red List API (optional)
+
+Required for `iucn_species_enrichment.ipynb`. Get a token at [IUCN Red List API](https://apiv3.iucnredlist.org/api/v3/token). Add to `.env`:
+
+```
+IUCN_API_KEY=your_iucn_api_token
+```
+
 ### AWS credentials (SSO)
 
 All S3 operations use the profile `486717354268_PowerUserAccess`. Authenticate with:
@@ -342,7 +489,10 @@ fs = s3fs.S3FileSystem(profile=AWS_PROFILE)
 |---|---|---|
 | Bronze | 15–45 min per country-year | GBIF server-side export generation |
 | Silver | 2–5 min | H3 vectorized computation |
-| Gold | 1–3 min | Groupby aggregation (fully vectorized) |
+| Gold (cell metrics) | 1–3 min | Groupby aggregation (fully vectorized) |
+| Gold (species dim) | 2–5 min | Species + H3 mapping aggregation |
+| IUCN enrichment | 10–60 min | IUCN API rate limits (cached locally) |
+| IUCN silver→gold | <1 min | JSON→Parquet conversion |
 
 **Silver and Gold are memory-bounded.** For a 1 GB compressed Parquet file (~7M rows × 14 projected columns), expect ~2–4 GB RAM usage during processing. Only one `(country, year)` partition is held in memory at a time.
 
