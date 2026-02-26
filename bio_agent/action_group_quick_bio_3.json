@@ -1,0 +1,19 @@
+[
+  {
+    "name": "GetSpeciesProfiles",
+    "description": "Profile text and sources for species by GBIF taxon_key or scientific name. Use for narrative and reporting.",
+    "parameters": {
+      "species_ids": {
+        "description": "List of GBIF taxon_key",
+        "required": "False",
+        "type": "Array"
+      },
+      "species_names": {
+        "description": "List of scientific names",
+        "required": "False",
+        "type": "Array"
+      }
+    },
+    "requireConfirmation": "DISABLED"
+  }
+]

@@ -115,3 +115,25 @@ Thumbs.db
 # Project-specific: data catalog / generated assets
 data/
 
+# bio_agent: build artifacts and installed packages
+bio_agent/lambda_build*/
+bio_agent/layer_build/
+bio_agent/layer/
+bio_agent/boto3/
+bio_agent/botocore/
+bio_agent/h3/
+bio_agent/psycopg2/
+bio_agent/psycopg2_binary*/
+bio_agent/dateutil/
+bio_agent/jmespath/
+bio_agent/s3transfer/
+bio_agent/urllib3/
+bio_agent/*.dist-info/
+bio_agent/six.py
+bio_agent/bin/
+bio_agent/include/
+bio_agent/lib/
+bio_agent/lib64/
+bio_agent/*.zip
+bio_agent/**/*.zip
+

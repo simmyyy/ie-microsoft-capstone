@@ -1,0 +1,68 @@
+[
+  {
+    "name": "GetHexSpeciesContext",
+    "description": "Top species, threatened and invasive lists for an H3 cell. Use to understand which species are present.",
+    "parameters": {
+      "h3_id": {
+        "description": "H3 cell index",
+        "required": "True",
+        "type": "String"
+      },
+      "h3_res": {
+        "description": "H3 resolution (6-9)",
+        "required": "True",
+        "type": "String"
+      },
+      "top_k": {
+        "description": "Number of top species (1-50), default 10",
+        "required": "False",
+        "type": "String"
+      },
+      "year": {
+        "description": "Year filter",
+        "required": "False",
+        "type": "String"
+      }
+    },
+    "requireConfirmation": "DISABLED"
+  },
+  {
+    "name": "GetOSMContext",
+    "description": "OSM-derived features for an H3 cell: roads, buildings, protected areas, ports, airports.",
+    "parameters": {
+      "h3_id": {
+        "description": "H3 cell index",
+        "required": "True",
+        "type": "String"
+      },
+      "h3_res": {
+        "description": "H3 resolution (6-9)",
+        "required": "True",
+        "type": "String"
+      }
+    },
+    "requireConfirmation": "DISABLED"
+  },
+  {
+    "name": "GetInfoAboutThreatenedSpecies",
+    "description": "IUCN Red List info for threatened species. Provide h3_id+h3_res to get threatened from hex, or species_ids_or_names to look up specific species.",
+    "parameters": {
+      "h3_id": {
+        "description": "H3 cell index (to get threatened species from hex)",
+        "required": "False",
+        "type": "String"
+      },
+      "h3_res": {
+        "description": "H3 resolution (6-9)",
+        "required": "False",
+        "type": "String"
+      },
+      "species_ids_or_names": {
+        "description": "List of species IDs or scientific names",
+        "required": "False",
+        "type": "Array"
+      }
+    },
+    "requireConfirmation": "DISABLED"
+  }
+]

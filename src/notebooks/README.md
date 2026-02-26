@@ -387,3 +387,43 @@ Each gold row = one H3 hex (`h3_index`) at a given resolution (`h3_resolution`) 
 3. Silver schema is read explicitly (StringType) to avoid BINARY vs INT conflicts in Parquet.
 
 **Requirement:** Silver must have `length_m` and `area_m2` columns (from `osm_bronze_to_silver`). Re-run the bronze→silver pipeline if your Silver was created before these columns were added.
+
+---
+
+## 8. Gold → PostgreSQL (`gold_to_postgres.ipynb`)
+
+Loads all gold Parquet tables from S3 into PostgreSQL for AI Agent querying and analytics. Designed to run on **AWS Glue (Spark)**.
+
+### Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `PG_URL`, `PG_USER`, `PG_PASSWORD` | PostgreSQL connection (JDBC URL) |
+| `TABLES` | List of gold tables to load |
+| `COUNTRIES` | Filter by country (e.g. `["ES"]`); `None` = all |
+| `YEARS` | Filter by year (e.g. `[2024]`); `None` = all |
+| `H3_RESOLUTIONS` | Filter by h3_resolution (e.g. `[6,7,8,9]`); `None` = all |
+| `NUM_PARTITIONS`, `BATCH_SIZE` | JDBC write tuning |
+
+### Features
+
+- **No duplicate columns** – drops path-derived partition columns if already in data
+- **Indexes for AI Agent** – `(h3_index, h3_resolution)`, `(country, year)`, `(taxon_key)`, `(scientific_name)` etc.
+- **Overwrite mode** – full table replace each run
+- **Parallel writes** – `numPartitions` concurrent JDBC connections
+
+### Tables loaded
+
+| Table | S3 path | Key indexes |
+|-------|---------|-------------|
+| gbif_cell_metrics | `gold/gbif_cell_metrics/country=XX/year=YYYY/h3_resolution=N/` | h3_index+res, country+year |
+| gbif_species_dim | `gold/gbif_species_dim/country=XX/year=YYYY/` | taxon_key, country+year |
+| gbif_species_h3_mapping | `gold/gbif_species_h3_mapping/...` | h3_index+res, taxon_key |
+| iucn_species_profiles | `gold/iucn_species_profiles/country=XX/year=YYYY/` | scientific_name |
+| osm_hex_features | `gold/osm_hex_features/country=XX/h3_resolution=N/` | h3_index+res |
+
+### Running on Glue
+
+1. Create a Glue connection to your PostgreSQL instance.
+2. Add `--additional-python-modules psycopg2-binary` for index creation.
+3. Pass `PG_URL`, `PG_USER`, `PG_PASSWORD` via job parameters or Secrets Manager.
