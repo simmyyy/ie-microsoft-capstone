@@ -7,22 +7,23 @@ This directory contains notebooks that form a **Bronze → Silver → Gold** dat
 ## Table of Contents
 
 1. [Architecture overview](#architecture-overview)
-2. [Data source – GBIF](#data-source--gbif)
-3. [Layer descriptions](#layer-descriptions)
+2. [Data inventory (for ML)](#data-inventory-for-ml)
+3. [Data source – GBIF](#data-source--gbif)
+4. [Layer descriptions](#layer-descriptions)
    - [Bronze – `gbif_etl_job.ipynb`](#bronze--gbif_etl_jobipynb)
    - [Silver – `gbif_bronze_to_silver.ipynb`](#silver--gbif_bronze_to_silveripynb)
    - [Gold – `gbif_silver_to_gold.ipynb`](#gold--gbif_silver_to_goldipynb)
    - [Gold – `gbif_silver_to_gold_dim.ipynb`](#gold--gbif_silver_to_gold_dimipynb)
-4. [IUCN enrichment pipeline](#iucn-enrichment-pipeline)
+5. [IUCN enrichment pipeline](#iucn-enrichment-pipeline)
    - [Silver – `iucn_species_enrichment.ipynb`](#silver--iucn_species_enrichmentipynb)
    - [Gold – `iucn_silver_to_gold.ipynb`](#gold--iucn_silver_to_goldipynb)
-5. [Streamlit Biodiversity Explorer](#streamlit-biodiversity-explorer)
-6. [H3 spatial indexing](#h3-spatial-indexing)
-7. [Key enrichment columns](#key-enrichment-columns)
-8. [Gold metrics reference](#gold-metrics-reference)
-9. [Running the pipeline](#running-the-pipeline)
-10. [Credentials & AWS setup](#credentials--aws-setup)
-11. [Performance notes](#performance-notes)
+6. [Streamlit Biodiversity Explorer](#streamlit-biodiversity-explorer)
+7. [H3 spatial indexing](#h3-spatial-indexing)
+8. [Key enrichment columns](#key-enrichment-columns)
+9. [Gold metrics reference](#gold-metrics-reference)
+10. [Running the pipeline](#running-the-pipeline)
+11. [Credentials & AWS setup](#credentials--aws-setup)
+12. [Performance notes](#performance-notes)
 
 ---
 
@@ -71,6 +72,95 @@ IUCN Red List API
 ```
 
 All layers are stored as **snappy-compressed Parquet**, partitioned by `country` and `year` (and additionally by `h3_resolution` in gold where applicable). Both partition keys are also embedded as regular columns inside each file so queries without a partition filter still work.
+
+---
+
+## Data inventory (for ML)
+
+All gold data is **H3-indexed** (hexagonal grid at resolutions 6–9). Join key: `h3_index` (or `h3_id` for Natura 2000) + `h3_resolution` + `country`.
+
+### 1. GBIF – Biodiversity Occurrences
+
+| Source | Path | Granularity |
+|--------|------|-------------|
+| **gbif_cell_metrics** | `gold/gbif_cell_metrics/country=XX/year=YYYY/h3_resolution=N/` | 1 row per (h3_index, year, country, h3_resolution) |
+
+**Key columns:** `observation_count`, `species_richness_cell`, `unique_datasets`, `n_threatened_species`, `n_sp_cr`, `n_sp_en`, `n_sp_vu`, `threat_score_weighted`, `shannon_H`, `simpson_1_minus_D`, `dqi`, `avg_coordinate_uncertainty_m`, `pct_uncertainty_gt_10km`
+
+**ML use cases:** Predict species richness, threatened species count, or DQI from spatial/context features; anomaly detection; temporal forecasting.
+
+---
+
+### 2. GBIF – Species Dimension & H3 Mapping
+
+| Source | Path | Granularity |
+|--------|------|-------------|
+| **gbif_species_dim** | `gold/gbif_species_dim/country=XX/year=YYYY/` | 1 row per (taxon_key, country, year) |
+| **gbif_species_h3_mapping** | `gold/gbif_species_h3_mapping/.../h3_resolution=N/` | 1 row per (h3_index, taxon_key) |
+
+**Key columns (species_dim):** `taxon_key`, `species_name`, `occurrence_count`, `is_threatened`, `is_invasive`, `country`, `year`  
+**Key columns (h3_mapping):** `h3_index`, `taxon_key`, `occurrence_count`, `is_threatened`, `is_invasive`, `h3_resolution`, `country`, `year`
+
+**ML use cases:** Species distribution prediction; invasive species spread; habitat suitability; co-occurrence patterns.
+
+---
+
+### 3. IUCN – Species Profiles
+
+| Source | Path | Granularity |
+|--------|------|-------------|
+| **iucn_species_profiles** | `gold/iucn_species_profiles/country=XX/year=YYYY/` | 1 row per species (threatened) |
+
+**Key columns:** `scientific_name`, `iucn_category`, `iucn_category_description`, `rationale`, `habitat_ecology`, `population`, `threats_text`, `conservation_text`, `population_trend`, `range_description`
+
+**ML use cases:** Text classification (threat severity); summarization; RAG for conservation Q&A; threat extraction from text.
+
+---
+
+### 4. OSM – Infrastructure & Land Use
+
+| Source | Path | Granularity |
+|--------|------|-------------|
+| **osm_hex_features** | `gold/osm_hex_features/country=XX/h3_resolution=N/` | 1 row per (h3_index, country, h3_resolution) |
+
+**Key columns:** `road_count`, `major_road_count`, `building_count`, `building_area_pct`, `waterbody_area_pct`, `wetland_area_pct`, `protected_area_pct`, `human_footprint_area_pct`, `urban_footprint_area_pct`, `power_plant_count`, `dam_count`, `port_feature_count`, `airport_feature_count`, `landuse_agriculture_count`, `natural_habitat_area_pct`, `barrier_count`, etc.
+
+**ML use cases:** Human footprint / pressure index; habitat fragmentation; biodiversity–infrastructure correlation; predict protected area coverage from land use.
+
+---
+
+### 5. Natura 2000 – Protected Areas
+
+| Source | Path | Granularity |
+|--------|------|-------------|
+| **nature2000_cell_protection** | `gold/nature2000_cell_protection/country=XX/h3_resolution=N/snapshot_date=YYYY-MM-DD/` | 1 row per (h3_id, country, h3_resolution) |
+
+**Key columns:** `h3_id`, `is_protected_area`, `nearest_protected_distance`, `site_code`, `site_name`, `AC`, `TIPO`, `overlap_fraction`, `site_cover_fraction`, `nearest_site_code`, `nearest_site_name`, `nearest_overlap_fraction`
+
+**ML use cases:** Predict protection status from OSM/GBIF; buffer zone analysis; proximity to protected areas as predictor.
+
+---
+
+### Join Example
+
+```sql
+SELECT g.h3_index, g.species_richness_cell, g.n_threatened_species, o.protected_area_pct, o.road_count_per_km2, n.is_protected_area
+FROM gbif_cell_metrics g
+JOIN osm_hex_features o ON g.h3_index = o.h3_index AND g.h3_resolution = o.h3_resolution AND g.country = o.country
+LEFT JOIN nature2000_cell_protection n ON g.h3_index = n.h3_id AND g.h3_resolution = n.h3_resolution AND g.country = n.country
+WHERE g.country = 'ES' AND g.year = 2024 AND g.h3_resolution = 7;
+```
+
+### Suggested ML Model Ideas
+
+| Task | Target | Features | Model type |
+|------|--------|----------|------------|
+| Species richness prediction | `species_richness_cell` | OSM (road_count, building_area_pct, protected_area_pct), Natura (is_protected_area, nearest_protected_distance) | Regression / XGBoost |
+| Threatened species hotspot | `n_threatened_species` | Same as above + temporal (year) | Classification / regression |
+| Data quality prediction | `dqi` | observation_count, pct_uncertainty_gt_10km, unique_datasets | Regression |
+| Invasive spread risk | `is_invasive` (species) | OSM features, habitat type, proximity to ports/roads | Classification |
+| Protected area proximity | `nearest_protected_distance` | OSM features, GBIF richness | Regression |
+| IUCN category from text | `iucn_category` | rationale, threats_text, habitat_ecology | Text classification / NER |
 
 ---
 

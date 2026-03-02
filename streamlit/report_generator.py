@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -221,6 +222,16 @@ SPECIES_RICHNESS_EXPLANATION = """
 • <b>% uncertainty > 10 km</b> — share of records with coordinate uncertainty exceeding 10 000 m
 """
 
+TEMPORAL_EXPLANATION = """
+<b>Temporal Signals (In-Time Analysis)</b> — yearly trends from GBIF occurrence data for this hex.<br/>
+<br/>
+• <b>Observation pressure</b> — total occurrence records per year; changes reflect sampling effort and new data publishers<br/>
+• <b>Biodiversity intensity</b> — species richness and threatened species count over time<br/>
+• <b>Threatened pressure</b> — CR/EN/VU breakdown; new threatened species = first seen in last 2 years<br/>
+• <b>Invasive early-warning</b> — acceleration score = recent rate / baseline rate; top 5 by acceleration<br/>
+• <b>Data Quality Index (DQI)</b> — composite 0–1 score; higher = better data quality
+"""
+
 REPORT_SUMMARY = """
 This report summarises biodiversity and infrastructure data for a single H3 hexagonal cell.
 <br/><br/>
@@ -287,6 +298,95 @@ WATER_BUILT_EXPLANATION = """
 """
 
 
+def _escape_html(text: str) -> str:
+    """Escape HTML for ReportLab Paragraph, then restore **bold** as <b>."""
+    text = re.sub(r"\*\*(.+?)\*\*", r"{{B}}\1{{/B}}", text)
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = text.replace("{{B}}", "<b>").replace("{{/B}}", "</b>")
+    return text
+
+
+def _add_ai_insights_elements(
+    text: str,
+    elements: list,
+    body_style: Any,
+    h2_style: Any,
+    explanation_style: Any,
+    make_table_fn: Any,
+) -> None:
+    """Parse AI insights markdown and add ReportLab elements."""
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, Spacer
+
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # ### Section heading
+        if stripped.startswith("###"):
+            title = re.sub(r"^#+\s*", "", stripped).strip()
+            elements.append(Paragraph(_escape_html(title), h2_style))
+            elements.append(Spacer(1, 0.2 * cm))
+            i += 1
+            continue
+
+        # Markdown table (| col | col |)
+        if stripped.startswith("|") and "|" in stripped[1:]:
+            table_rows = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                row = lines[i].strip()
+                cells = [c.strip() for c in row.split("|")[1:-1]]
+                if cells and not all(re.match(r"^[-:]+$", c) for c in cells):
+                    table_rows.append(cells)
+                i += 1
+            if table_rows:
+                col_count = len(table_rows[0])
+                col_widths = [16.0 / col_count] * col_count
+                elements.append(make_table_fn(table_rows, col_widths, "#2e86ab"))
+                elements.append(Spacer(1, 0.3 * cm))
+            continue
+
+        # Bullet point (- or •) or numbered list (1. 2. 3.)
+        if (
+            stripped.startswith("- ")
+            or stripped.startswith("• ")
+            or (len(stripped) >= 2 and stripped[0].isdigit() and stripped[1] == ".")
+        ):
+            content = re.sub(r"^[-•]\s+", "", stripped)
+            content = re.sub(r"^\d+\.\s+", "", content)
+            elements.append(Paragraph(f"• {_escape_html(content)}", body_style))
+            i += 1
+            continue
+
+        # Empty line – skip
+        if not stripped:
+            i += 1
+            continue
+
+        # Regular paragraph – collect until blank line or block start
+        para_lines = [stripped]
+        i += 1
+        while i < len(lines):
+            next_line = lines[i].strip()
+            if not next_line:
+                break
+            if next_line.startswith("|") or next_line.startswith("###"):
+                break
+            if next_line.startswith("- ") or next_line.startswith("• "):
+                break
+            if len(next_line) >= 2 and next_line[0].isdigit() and next_line[1] == ".":
+                break
+            para_lines.append(next_line)
+            i += 1
+        para_text = " ".join(para_lines).replace("\n", " ")
+        if para_text:
+            elements.append(Paragraph(_escape_html(para_text), body_style))
+            elements.append(Spacer(1, 0.15 * cm))
+        continue
+
+
 def generate_report(
     h3_index: str,
     h3_res: int,
@@ -294,6 +394,8 @@ def generate_report(
     osm_row: pd.Series,
     cell_metrics: pd.Series | None = None,
     name_col: str = "species_name",
+    ai_insights: str | None = None,
+    temporal_artifacts: dict | None = None,
 ) -> bytes:
     """
     Generate a PDF report for the given H3 cell.
@@ -305,6 +407,7 @@ def generate_report(
         osm_row: OSM metrics row for this hex
         cell_metrics: Optional GBIF cell metrics (species_richness_cell, etc.)
         name_col: Column name for species display
+        temporal_artifacts: Optional dict with charts, tables, narrative_text, limitations from temporal_analysis
 
     Returns:
         PDF file as bytes
@@ -605,8 +708,40 @@ def generate_report(
         elements.append(_divider())
         elements.append(Spacer(1, 0.5 * cm))
 
-    # ── 5. OSM Infrastructure ───────────────────────────────────────────────────
-    elements.append(Paragraph("5. OSM Infrastructure", h2_style))
+    # ── 5. Temporal Signals (In-Time Analysis) ───────────────────────────────────
+    if temporal_artifacts and temporal_artifacts.get("charts"):
+        elements.append(Paragraph("5. Temporal Signals (In-Time Analysis)", h2_style))
+        elements.append(Paragraph(TEMPORAL_EXPLANATION, explanation_style))
+        elements.append(Spacer(1, 0.3 * cm))
+        for title, chart_bytes in temporal_artifacts.get("charts", []):
+            elements.append(Paragraph(f"<b>{title}</b>", body_style))
+            elements.append(Image(io.BytesIO(chart_bytes), width=12 * cm, height=6.5 * cm))
+            elements.append(Spacer(1, 0.3 * cm))
+        for table_title, table_rows in temporal_artifacts.get("tables", []):
+            if table_rows:
+                elements.append(Paragraph(f"<b>{table_title}</b>", body_style))
+                col_count = len(table_rows[0]) if table_rows else 0
+                col_widths = [16.0 / col_count] * col_count if col_count else [8, 8]
+                elements.append(_make_table(table_rows, col_widths, "#2e86ab"))
+                elements.append(Spacer(1, 0.3 * cm))
+        if temporal_artifacts.get("narrative_text"):
+            for line in temporal_artifacts["narrative_text"].split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                elements.append(Paragraph(_escape_html(line), body_style))
+                elements.append(Spacer(1, 0.1 * cm))
+        if temporal_artifacts.get("limitations"):
+            elements.append(Paragraph(
+                f"<i>Limitations: {temporal_artifacts['limitations']}</i>",
+                small_style,
+            ))
+        elements.append(Spacer(1, 0.5 * cm))
+        elements.append(_divider())
+        elements.append(Spacer(1, 0.5 * cm))
+
+    # ── 6. OSM Infrastructure ───────────────────────────────────────────────────
+    elements.append(Paragraph("6. OSM Infrastructure", h2_style))
 
     chart_img = _render_land_cover_chart(osm_row)
     if chart_img:
@@ -728,6 +863,20 @@ def generate_report(
         elements.append(_make_table(water_data, [6, 4], "#3498db"))
 
     elements.append(Spacer(1, 1 * cm))
+
+    # ── 7. AI Insights (optional) ────────────────────────────────────────────
+    if ai_insights and ai_insights.strip():
+        elements.append(Paragraph("7. AI Insights", h2_style))
+        elements.append(Spacer(1, 0.3 * cm))
+        _add_ai_insights_elements(
+            ai_insights.strip(),
+            elements,
+            body_style,
+            h2_style,
+            explanation_style,
+            _make_table,
+        )
+        elements.append(Spacer(1, 0.5 * cm))
 
     doc.build(elements)
     return buf.getvalue()
