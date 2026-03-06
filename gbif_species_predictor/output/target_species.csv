@@ -1,0 +1,21 @@
+target_idx,species_id,species_name,is_threatened,is_invasive
+0,7341500,Lanius meridionalis,True,False
+1,2498255,Aythya ferina,True,False
+2,2495708,Streptopelia turtur,True,False
+3,7406504,Ichthyaetus audouinii,True,False
+4,2480696,Neophron percnopterus,True,False
+5,2480327,Pluvialis squatarola,True,False
+6,2474921,Otis tarda,True,False
+7,2480510,Aquila adalberti,True,False
+8,2498302,Oxyura leucocephala,True,False
+9,5229360,Puffinus mauretanicus,True,False
+10,2481741,Calidris ferruginea,True,False
+11,8049830,Pararge aegeria,True,False
+12,2436940,Oryctolagus cuniculus,True,False
+13,5210473,Trachurus trachurus,True,False
+14,8894817,Caretta caretta,True,False
+15,2417343,Chimaera monstrosa,True,False
+16,2481193,Ichthyaetus audouinii,True,False
+17,2480509,2480509,True,False
+18,5213996,Glyptocephalus cynoglossus,True,False
+19,2431776,Salamandra salamandra,True,False
