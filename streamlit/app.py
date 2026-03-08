@@ -18,7 +18,7 @@ import json
 import warnings
 from typing import Any
 
-from ui.styles import inject_css
+from ui.styles_v2 import inject_css
 from ui.components import header
 
 import streamlit as st
@@ -83,6 +83,7 @@ MAX_PROTECTED_HEXES_DISPLAY = 50_000
 AWS_PROFILE = os.getenv("AWS_PROFILE", "") #"486717354268_PowerUserAccess"
 COUNTRY = "ES"
 MAX_CHOSEN_HEXES = 6
+ENABLE_LANDING = True
 
 # ── Demo / hardcoded settings ─────────────────────────────────────────────────
 DEMO_YEAR = 2024  # hardcoded for demo; change to unlock year selector
