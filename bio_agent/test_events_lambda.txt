@@ -1,0 +1,20 @@
+=== 1 GetHexMetrics ===
+{"messageVersion":"1.0","agent":{"name":"BioAgent","id":"test","alias":"test","version":"1"},"actionGroup":"BiodiversityTools","apiPath":"/getHexMetrics","httpMethod":"POST","parameters":[],"requestBody":{"content":{"application/json":{"properties":[{"name":"h3_id","type":"string","value":"86392b417ffffff"},{"name":"h3_res","type":"integer","value":"6"}]}}},"sessionAttributes":{},"promptSessionAttributes":{}}
+
+=== 2 GetNeighborHexes ===
+{"messageVersion":"1.0","agent":{"name":"BioAgent","id":"test","alias":"test","version":"1"},"actionGroup":"BiodiversityTools","apiPath":"/getNeighborHexes","httpMethod":"POST","parameters":[],"requestBody":{"content":{"application/json":{"properties":[{"name":"h3_id","type":"string","value":"86392b417ffffff"},{"name":"h3_res","type":"integer","value":"6"},{"name":"k_ring","type":"integer","value":"1"}]}}},"sessionAttributes":{},"promptSessionAttributes":{}}
+
+=== 3 GetNeighborSummary ===
+{"messageVersion":"1.0","agent":{"name":"BioAgent","id":"test","alias":"test","version":"1"},"actionGroup":"BiodiversityTools","apiPath":"/getNeighborSummary","httpMethod":"POST","parameters":[],"requestBody":{"content":{"application/json":{"properties":[{"name":"h3_ids","type":"array","value":"[\"86392b417ffffff\", \"86392b41fffffff\", \"86392b42fffffff\"]"},{"name":"h3_res","type":"integer","value":"6"},{"name":"year","type":"integer","value":"2024"}]}}},"sessionAttributes":{},"promptSessionAttributes":{}}
+
+=== 4 GetHexSpeciesContext ===
+{"messageVersion":"1.0","agent":{"name":"BioAgent","id":"test","alias":"test","version":"1"},"actionGroup":"BiodiversityTools","apiPath":"/getHexSpeciesContext","httpMethod":"POST","parameters":[],"requestBody":{"content":{"application/json":{"properties":[{"name":"h3_id","type":"string","value":"86392b417ffffff"},{"name":"h3_res","type":"integer","value":"6"}]}}},"sessionAttributes":{},"promptSessionAttributes":{}}
+
+=== 5 GetOSMContext ===
+{"messageVersion":"1.0","agent":{"name":"BioAgent","id":"test","alias":"test","version":"1"},"actionGroup":"BiodiversityTools","apiPath":"/getOSMContext","httpMethod":"POST","parameters":[],"requestBody":{"content":{"application/json":{"properties":[{"name":"h3_id","type":"string","value":"86392b417ffffff"},{"name":"h3_res","type":"integer","value":"6"}]}}},"sessionAttributes":{},"promptSessionAttributes":{}}
+
+=== 6 GetInfoAboutThreatenedSpecies ===
+{"messageVersion":"1.0","agent":{"name":"BioAgent","id":"test","alias":"test","version":"1"},"actionGroup":"BiodiversityTools","apiPath":"/getInfoAboutThreatenedSpecies","httpMethod":"POST","parameters":[],"requestBody":{"content":{"application/json":{"properties":[{"name":"h3_id","type":"string","value":"86392b417ffffff"},{"name":"h3_res","type":"integer","value":"6"}]}}},"sessionAttributes":{},"promptSessionAttributes":{}}
+
+=== 7 GetSpeciesProfiles ===
+{"messageVersion":"1.0","agent":{"name":"BioAgent","id":"test","alias":"test","version":"1"},"actionGroup":"BiodiversityTools","apiPath":"/getSpeciesProfiles","httpMethod":"POST","parameters":[],"requestBody":{"content":{"application/json":{"properties":[{"name":"species_names","type":"array","value":"[\"Abies pinsapo\", \"Aquila adalberti\"]"}]}}},"sessionAttributes":{},"promptSessionAttributes":{}}

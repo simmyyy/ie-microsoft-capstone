@@ -1,0 +1,73 @@
+[
+  {
+    "name": "GetHexMetrics",
+    "description": "Fetch biodiversity metrics for an H3 cell: species richness, threatened count, threat score, DQI.",
+    "parameters": {
+      "h3_id": {
+        "description": "H3 cell index (e.g. 861f1a47fffffff)",
+        "required": "True",
+        "type": "String"
+      },
+      "h3_res": {
+        "description": "H3 resolution (6-9)",
+        "required": "True",
+        "type": "String"
+      },
+      "time_start": {
+        "description": "Start year for time range",
+        "required": "False",
+        "type": "String"
+      },
+      "time_end": {
+        "description": "End year for time range",
+        "required": "False",
+        "type": "String"
+      }
+    },
+    "requireConfirmation": "DISABLED"
+  },
+  {
+    "name": "GetNeighborHexes",
+    "description": "Return k-ring neighbor H3 cells. Use k_ring=1 for immediate neighbors, 2-3 for larger rings.",
+    "parameters": {
+      "h3_id": {
+        "description": "H3 cell index",
+        "required": "True",
+        "type": "String"
+      },
+      "h3_res": {
+        "description": "H3 resolution (6-9)",
+        "required": "True",
+        "type": "String"
+      },
+      "k_ring": {
+        "description": "Ring size (1-3), default 1",
+        "required": "False",
+        "type": "String"
+      }
+    },
+    "requireConfirmation": "DISABLED"
+  },
+  {
+    "name": "GetNeighborSummary",
+    "description": "Aggregated stats for neighbor cells: mean richness, total threatened, mean DQI, top risky neighbors.",
+    "parameters": {
+      "h3_ids": {
+        "description": "List of H3 cell indices (from GetNeighborHexes)",
+        "required": "True",
+        "type": "Array"
+      },
+      "h3_res": {
+        "description": "H3 resolution (6-9)",
+        "required": "True",
+        "type": "String"
+      },
+      "year": {
+        "description": "Year filter",
+        "required": "False",
+        "type": "String"
+      }
+    },
+    "requireConfirmation": "DISABLED"
+  }
+]
