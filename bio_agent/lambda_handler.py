@@ -13,6 +13,7 @@ from tools.get_neighbor_hexes import handler as get_neighbor_hexes
 from tools.get_neighbor_summary import handler as get_neighbor_summary
 from tools.get_hex_species_context import handler as get_hex_species_context
 from tools.get_osm_context import handler as get_osm_context
+from tools.get_terrain_cover import handler as get_terrain_cover
 from tools.get_info_about_threatened_species import handler as get_info_about_threatened_species
 from tools.get_species_profiles import handler as get_species_profiles
 
@@ -39,6 +40,9 @@ TOOL_HANDLERS = {
     "GetOSMContext": get_osm_context,
     "getOSMContext": get_osm_context,
     "/getOSMContext": get_osm_context,
+    "GetTerrainCover": get_terrain_cover,
+    "getTerrainCover": get_terrain_cover,
+    "/getTerrainCover": get_terrain_cover,
     "GetInfoAboutThreatenedSpecies": get_info_about_threatened_species,
     "getInfoAboutThreatenedSpecies": get_info_about_threatened_species,
     "/getInfoAboutThreatenedSpecies": get_info_about_threatened_species,

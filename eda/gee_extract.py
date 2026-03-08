@@ -19,8 +19,8 @@ END_DATE   = "2024-12-31"
 
 SCALE_M = 250                # resolución de reducción (no es el tamaño del grid)
 
-# Ajusta esto a tu proyecto de GEE (si no sabes cuál, deja None y te autentica igual)
-EE_PROJECT_ID = None  # e.g. "tu-proyecto-id"
+# Match gee_hex_terrain.ipynb; GEE now requires a project
+EE_PROJECT_ID = "ie-microsoft-capstone"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO_ROOT / "data" / "gee"
