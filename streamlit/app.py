@@ -18,6 +18,9 @@ import json
 import warnings
 from typing import Any
 
+from ui.styles import inject_css
+from ui.components import header
+
 import streamlit as st
 
 # ── Dependency check ──────────────────────────────────────────────────────────
@@ -47,6 +50,7 @@ if _missing:
     st.stop()
 
 # ── Standard imports (all deps confirmed present) ─────────────────────────────
+import os
 import boto3  # noqa: E402
 import folium  # noqa: E402
 import h3  # noqa: E402
@@ -76,7 +80,7 @@ GOLD_OSM_HEX = "gold/osm_hex_features"
 GOLD_NATURE2000 = "gold/nature2000_cell_protection"
 NATURE2000_SNAPSHOT_DATE = "2026-02-27"
 MAX_PROTECTED_HEXES_DISPLAY = 50_000
-AWS_PROFILE = "486717354268_PowerUserAccess"
+AWS_PROFILE = os.getenv("AWS_PROFILE", "") #"486717354268_PowerUserAccess"
 COUNTRY = "ES"
 MAX_CHOSEN_HEXES = 6
 
@@ -140,7 +144,6 @@ def get_s3fs() -> s3fs.S3FileSystem:
     """Return a cached s3fs filesystem using the configured AWS profile."""
     s3fs.S3FileSystem.clear_instance_cache()
     return s3fs.S3FileSystem(profile=AWS_PROFILE)
-
 
 @st.cache_resource
 def get_duckdb_con():
@@ -1000,67 +1003,43 @@ def format_metric(value: Any) -> str:
 
 
 def render_sidebar() -> tuple[bool, int, str, int, int]:
-    """
-    Render sidebar controls only (no cell-detail panel – that lives in the
-    right column of the main area).
-
-    Returns:
-        (show_overlay, h3_res, color_metric, max_hexes, selected_year)
-    """
-    st.sidebar.title("🌿 Biodiversity Explorer")
-    st.sidebar.markdown("Spain · GBIF Gold Layer")
-    st.sidebar.caption(
-        "⚠️ **Demo mode** – year locked to 2024, "
-        "resolutions limited to 6 & 7, max hexes fixed at 20 000."
-    )
-    st.sidebar.caption(
-        "**Analysis tab** requires `gbif_silver_to_gold_dim` and `iucn_silver_to_gold`. "
-        "**Protected Areas tab** requires `nature2000_silver_to_gold`."
-    )
+    st.sidebar.markdown("### 🌿 Biodiversity Explorer")
+    st.sidebar.markdown("<div class='muted'>Spain • GBIF Gold layer</div>", unsafe_allow_html=True)
     st.sidebar.divider()
 
+    st.sidebar.markdown("**Controls**")
     show_overlay = st.sidebar.checkbox("Show H3 overlay", value=True)
 
-    # Year – locked to 2024 for the demo
-    st.sidebar.selectbox(
-        "Year *(hardcoded – demo)*",
-        options=[DEMO_YEAR],
-        index=0,
-        disabled=True,
-    )
+    st.sidebar.selectbox("Year", options=[DEMO_YEAR], disabled=True)
     selected_year = DEMO_YEAR
 
     h3_res = st.sidebar.select_slider(
         "H3 resolution",
-        options=DEMO_H3_OPTIONS,  # [6, 7] only for demo
+        options=DEMO_H3_OPTIONS,
         value=DEMO_H3_OPTIONS[0],
-        help=(
-            "Res 6 ≈ 36 km² per cell (country overview). "
-            "Res 7 ≈ 5 km² per cell (regional detail). "
-            "Resolutions 8 & 9 disabled in demo mode."
-        ),
     )
 
     color_metric = st.sidebar.selectbox(
         "Colour metric",
         options=COLOR_METRICS,
-        index=0,
         format_func=lambda m: m.replace("_", " ").title(),
         disabled=not show_overlay,
     )
 
-    # Max hexes – fixed for demo, shown as info only
     max_hexes = MAX_HEXES_DEFAULT
-    st.sidebar.caption(f"Max hexes: **{max_hexes:,}** *(fixed for demo)*")
+    st.sidebar.caption(f"Max hexes: **{MAX_HEXES_DEFAULT:,}** (demo)")
 
     st.sidebar.divider()
-    chat_open = st.sidebar.checkbox(
-        "💬 AI Chat",
-        value=False,
-        help="Show chat panel with biodiversity AI assistant",
-        key="chat_panel_open",
-    )
+    st.sidebar.markdown("**AI**")
+    chat_open = st.sidebar.checkbox("Enable AI chat", value=False, key="chat_panel_open")
 
+    with st.sidebar.expander("Data status", expanded=False):
+        st.write(f"AWS_PROFILE: `{AWS_PROFILE or 'default'}`")
+        st.write(f"DuckDB: `{'available' if _DUCKDB_AVAILABLE else 'fallback'}`")
+
+    with st.sidebar.expander("Demo limitations", expanded=False):
+        st.caption("Year locked to 2024 • Resolutions limited to 6–7 • Max hexes fixed.")
+    
     return show_overlay, h3_res, color_metric, max_hexes, selected_year, chat_open
 
 
@@ -2072,6 +2051,19 @@ def main() -> None:
         page_icon="🌿",
         layout="wide",
         initial_sidebar_state="expanded",
+    )
+
+    #=========ESTILO CSS=========
+    inject_css()
+    status = f"""
+    <div class='label'>Environment</div>
+    <div style='font-weight:700;'>ES • {DEMO_YEAR} • H3 res {st.session_state.get("prev_h3_res") or DEMO_H3_OPTIONS[0]}</div>
+    <div class='muted'>AWS_PROFILE: <code>{AWS_PROFILE or "default"}</code> • DuckDB: {"ON" if _DUCKDB_AVAILABLE else "fallback"}</div>
+    """
+    header(
+        "GBIF Biodiversity Explorer",
+        "Premium biodiversity screening using GBIF (Gold) + H3 + IUCN + Natura 2000 + OSM + AI insights.",
+        right_html=status
     )
 
     # ── Session state defaults ────────────────────────────────────────────────
