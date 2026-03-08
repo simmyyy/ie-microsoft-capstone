@@ -15,7 +15,8 @@ import h3
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_GOLD_DIR = REPO_ROOT / "data" / "gee" / "gold" / "gee_hex_features"
 
-EE_PROJECT = os.environ.get("EE_PROJECT", "gen-lang-client-0247261745")
+# Match gee_hex_terrain.ipynb; override with EE_PROJECT env var if needed
+EE_PROJECT = os.environ.get("EE_PROJECT", "ie-microsoft-capstone")
 
 COUNTRY_ISO2 = os.environ.get("GEE_COUNTRY", "ES")   # "ES" or "PT"
 YEAR = int(os.environ.get("GEE_YEAR", "2024"))

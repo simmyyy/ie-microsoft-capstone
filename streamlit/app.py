@@ -129,7 +129,7 @@ MAX_HEXES_CAP = 20_000
 
 # Bedrock Agent (biodiversity risk analysis)
 BEDROCK_AGENT_ID = "1XGKFMJE8D"
-BEDROCK_AGENT_ALIAS_ID = "ZY9ZMGWXWB"  # ie-bio-agent alias ID
+BEDROCK_AGENT_ALIAS_ID = "LFOSLYI9QF"  # ie-bio-agent alias ID
 BEDROCK_REGION = "eu-west-2"
 
 
@@ -1598,7 +1598,9 @@ def render_terrain_tab(chosen_hexes: set[str], h3_res: int) -> None:
     skip_cols = {"h3_index", "h3_resolution"}
     elev_col = "elevation_mean" if "elevation_mean" in df_full.columns else None
     slope_col = "slope_mean" if "slope_mean" in df_full.columns else None
-    lc_cols = sorted([c for c in df_full.columns if c.startswith("lc_") and c.endswith("_pct")])
+    lc_cols = sorted(
+        [c for c in df_full.columns if c.startswith("lc_") and c.endswith("_pct")]
+    )
 
     for h3_idx in hex_list:
         row_df = df_full[df_full["h3_index"] == h3_idx]
@@ -1861,7 +1863,16 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
     st.subheader("📄 Generate report")
     st.caption(
         "Create a PDF report with location map, species data (threatened/invasive), "
-        "IUCN rationale, and OSM infrastructure summary."
+        "IUCN rationale, terrain (elevation, land cover), and OSM infrastructure summary."
+    )
+
+    industry = (
+        st.text_input(
+            "Industry (optional)",
+            placeholder="e.g. Agriculture, Mining, Renewable energy, Tourism",
+            key="report_industry",
+        ).strip()
+        or None
     )
 
     report_hex = (
@@ -1884,8 +1895,11 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                 ai_insights = None
                 try:
                     with st.spinner("Fetching AI insights…"):
+                        industry_ctx = (
+                            f" Industry context: {industry}." if industry else ""
+                        )
                         prompt = (
-                            f"Analyze biodiversity risk for hex {report_hex}, resolution {h3_res}. "
+                            f"Analyze biodiversity risk for hex {report_hex}, resolution {h3_res}.{industry_ctx} "
                             "Provide a structured report in English with: "
                             "1. Executive Summary (2-4 sentences, risk tier: LOW/MODERATE/HIGH/CRITICAL), "
                             "2. Key Metrics (table: Metric | Value | Interpretation), "
@@ -1941,6 +1955,12 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                 osm_row = (
                     osm_row.iloc[0] if not osm_row.empty else pd.Series(dtype=object)
                 )
+
+                gee_terrain_df = load_gee_terrain(h3_res)
+                gee_terrain_row = None
+                if not gee_terrain_df.empty and "h3_index" in gee_terrain_df.columns:
+                    gt = gee_terrain_df[gee_terrain_df["h3_index"] == report_hex]
+                    gee_terrain_row = gt.iloc[0] if not gt.empty else None
 
                 species_for_hex = h3_df[h3_df["h3_index"] == report_hex]
 
@@ -2001,6 +2021,8 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                     ai_insights=ai_insights,
                     temporal_artifacts=temporal_artifacts,
                     year=year,
+                    gee_terrain_row=gee_terrain_row,
+                    industry=industry,
                 )
                 st.session_state["report_pdf"] = pdf_bytes
                 st.session_state["report_hex"] = report_hex
