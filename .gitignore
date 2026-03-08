@@ -1,0 +1,15 @@
+# Virtual environment
+gbif_env/
+
+# Parquet data
+*.parquet
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Mac files
+.DS_Store
+
+# Temporary Office files
+~$*
