@@ -22,6 +22,8 @@ def generate_report(
     ai_insights: str | None = None,
     temporal_artifacts: dict | None = None,
     year: int | None = None,
+    gee_terrain_row: pd.Series | dict | None = None,
+    industry: str | None = None,
 ) -> bytes:
     """
     Generate a PDF report for the given H3 cell.
@@ -52,4 +54,6 @@ def generate_report(
         ai_insights=ai_insights,
         temporal_artifacts=temporal_artifacts,
         year=year,
+        gee_terrain_row=gee_terrain_row,
+        industry=industry,
     )

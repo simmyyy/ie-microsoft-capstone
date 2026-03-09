@@ -46,13 +46,19 @@ We use **H3 resolution 7** (~5.16 km² per cell) for Spain. H3 provides a hierar
 - **Lanius meridionalis** (Southern Grey Shrike, species_id 7341500) is **always included** in the target list (replaces the 10th species if not in top 9).
 - Current target species: Lanius meridionalis, Aythya ferina, Streptopelia turtur, Ichthyaetus audouinii, Neophron percnopterus, Pluvialis squatarola, Otis tarda, Aquila adalberti, Oxyura leucocephala.
 
-### 2.3 Target Variable (Y)
+### 2.3 Which Hexes Go Into Training?
+
+We take **all hexes that have at least one record** of any of our 10 threatened species (with `occurrence_count >= 2`) in the years 2018–2024. We do **not** filter by "200 species" or "200 observations" for training. A hex is included if it appears in the GBIF mapping for at least one of our target species in the training, feature, or evaluation windows. Each such hex gets a row in the dataset: for the 10 species, we have Y = 1 where present, Y = 0 where absent (or not recorded). So we have both positive and negative labels per hex.
+
+The **200 threshold** (`obs_count_all >= 200`) refers to **total observations** in the hex (all species combined), not number of species. It is used **only for evaluation** (mask-and-recover, high-effort subset)—not for selecting training hexes. It helps focus evaluation on well-sampled hexes where absence is more trustworthy.
+
+### 2.4 Target Variable (Y)
 
 - **Y (training target):** Binary presence matrix `(n_hexes × n_species)`. `Y[i, j] = 1` if species `j` was observed in hex `i` during **Y_TRAIN_YEARS (2018–2023)** with `occurrence_count >= PRESENCE_THRESHOLD` (default 2).
 - **Y_eval (evaluation target):** Same structure, but presence in **PREDICT_YEAR (2024)**. Used for test-set evaluation.
 - **Presence threshold:** A hex counts as "present" for a species only if `occurrence_count >= 2` in that hex-year, reducing noise from single incidental records.
 
-### 2.4 Features (X)
+### 2.5 Features (X)
 
 **40 features** when `USE_OCCURRENCE_FEATURES=False` (default):
 
@@ -65,7 +71,7 @@ We use **H3 resolution 7** (~5.16 km² per cell) for Spain. H3 provides a hierar
 
 If `USE_OCCURRENCE_FEATURES=True`, we add: `log_obs_count`, `dqi`, `neighbor_log_obs_mean`, and historical presence flags `in_hex_last5y`, `in_k1_last5y`, `in_k2_last5y` per species (k1/k2 = presence in k-ring neighbors). We use **False** to avoid leakage and focus on environmental predictors.
 
-### 2.5 Train/Val/Test Split: Spatial Block Split
+### 2.6 Train/Val/Test Split: Spatial Block Split
 
 To avoid **spatial autocorrelation leakage** (nearby hexes share similar conditions and labels), we split by **parent H3 block** at resolution 5:
 
@@ -73,7 +79,7 @@ To avoid **spatial autocorrelation leakage** (nearby hexes share similar conditi
 - Blocks are shuffled (seed 42) and split: **70% train**, **15% val**, **15% test**.
 - All hexes in a block go to the same split. The model never sees test-block hexes during training.
 
-### 2.6 Preprocessing
+### 2.7 Preprocessing
 
 - Features are **StandardScaler**-normalized (fit on train, transform val/test).
 - Missing values and inf replaced with 0; values clipped to `[-1e15, 1e15]` to avoid float overflow.
@@ -145,6 +151,11 @@ We use **SHAP TreeExplainer** on the XGBoost classifier for Lanius meridionalis 
 - **R@K:** Recall@K – fraction of true present species found in top-K predictions per hex.
 - **P@K:** Precision@K – fraction of top-K predictions that are truly present.
 - **XGBoost** achieves the best macro/micro PR-AUC and is used for downstream AoH and showcase maps.
+
+**Most frequent baseline:** Species are ranked by total presence count in the training set (`Y_train.sum(axis=0)`). For every hex, the model predicts the same ordering: the most frequent species gets probability 1.0, the second 0.99, the third 0.98, and so on down to 0.91 for the top 10. No hex features are used—the prediction is identical for all hexes. We use this as our **baseline** because it represents the best guess without any environmental information: "when in doubt, predict the most common species first." It establishes a floor for performance; ML models that beat it demonstrate that terrain, land cover, and OSM features add predictive value beyond simple prevalence.
+
+**Why XGBoost outperforms the baseline:** The baseline does reasonably well on R@1 and P@1 (0.659 and 0.152) because it always predicts the most frequent species first—a strategy that works when that species appears in many hexes. However, it fails on Macro and Micro PR-AUC (0.074 and 0.129) because it assigns the same probability to every hex for each species; it has no ability to rank "hexes where species X is present" above "hexes where it is absent." XGBoost, by contrast, uses elevation, land cover, OSM, and Natura 2000 features to discriminate: it assigns higher probabilities to hexes whose environmental conditions match where each species was observed in training. This yields much better PR-AUC (0.316 / 0.314) and stronger R@1/P@1 (0.771 / 0.281). The gap in PR-AUC shows that XGBoost learns meaningful habitat associations; the gap in top-K metrics shows it also improves practical ranking for conservation applications.
+
 
 ### 4.2 Per-Species Results (Sample)
 

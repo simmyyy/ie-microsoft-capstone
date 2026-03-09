@@ -36,6 +36,17 @@ def _latlon_to_tile(lat: float, lon: float, zoom: int) -> tuple[int, int]:
     return (xtile, ytile)
 
 
+def _latlon_to_pixel(lat: float, lon: float, zoom: int, tx0: int, ty0: int, tile_size: int = 256) -> tuple[float, float]:
+    """Convert lat/lng to pixel coords within a tile grid starting at (tx0, ty0)."""
+    lat_rad = math.radians(lat)
+    n = 2.0**zoom
+    tile_x = (lon + 180.0) / 360.0 * n
+    tile_y = (1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n
+    px = (tile_x - tx0) * tile_size
+    py = (tile_y - ty0) * tile_size
+    return (px, py)
+
+
 def _render_map_image(h3_index: str, width: int = 550, height: int = 380) -> bytes | None:
     try:
         import h3
@@ -44,16 +55,47 @@ def _render_map_image(h3_index: str, width: int = 550, height: int = 380) -> byt
     except ImportError:
         return None
     try:
-        lat, lng = h3.cell_to_latlng(h3_index)
-        zoom = 12
-        tx, ty = _latlon_to_tile(lat, lng, zoom)
+        boundary = h3.cell_to_boundary(h3_index)
+        if not boundary or len(boundary) < 3:
+            return None
+        # Parse boundary: h3 returns (lat, lng) per vertex
+        lats, lngs = [], []
+        for pt in boundary:
+            if len(pt) == 2:
+                plat, plng = pt[0], pt[1]
+                if abs(plat) > 90 or abs(plng) > 180:
+                    plat, plng = pt[1], pt[0]
+                lats.append(plat)
+                lngs.append(plng)
+        if not lats:
+            return None
+        min_lat, max_lat = min(lats), max(lats)
+        min_lng, max_lng = min(lngs), max(lngs)
+        center_lat = (min_lat + max_lat) / 2
+        center_lng = (min_lng + max_lng) / 2
+        delta_lat = max_lat - min_lat
+        delta_lng = max_lng - min_lng
+        # Add 40% padding so hex fits with margin
+        span_lat = max(delta_lat * 1.4, 0.01)
+        span_lng = max(delta_lng * 1.4, 0.01)
+        # Pick highest zoom (most zoomed in) where 3x3 tiles still fit the hex
+        tiles_n = 3
+        zoom = 10
+        for z in range(14, 5, -1):
+            nz = 2.0**z
+            deg_per = 360.0 / nz
+            if tiles_n * deg_per >= max(span_lat, span_lng):
+                zoom = z
+                break
         tile_size = 256
-        tiles_x, tiles_y = 2, 2
-        img_w, img_h = tile_size * tiles_x, tile_size * tiles_y
+        tx, ty = _latlon_to_tile(center_lat, center_lng, zoom)
+        tx0 = tx - tiles_n // 2
+        ty0 = ty - tiles_n // 2
+        img_w = img_h = tile_size * tiles_n
         canvas = Image.new("RGB", (img_w, img_h), (248, 248, 248))
-        for dx in range(tiles_x):
-            for dy in range(tiles_y):
-                txx, tyy = tx - 1 + dx, ty - 1 + dy
+        for dx in range(tiles_n):
+            for dy in range(tiles_n):
+                txx, tyy = tx0 + dx, ty0 + dy
                 url = f"https://tile.openstreetmap.org/{zoom}/{txx}/{tyy}.png"
                 try:
                     req = urllib.request.Request(url, headers={"User-Agent": "BiodiversityReport/1.0"})
@@ -62,11 +104,13 @@ def _render_map_image(h3_index: str, width: int = 550, height: int = 380) -> byt
                         canvas.paste(tile_img, (dx * tile_size, dy * tile_size))
                 except Exception:
                     pass
-        cx, cy = img_w // 2, img_h // 2
         draw = ImageDraw.Draw(canvas)
-        r = 24
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline="#0d3b4c", width=4)
-        draw.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill="#0d3b4c")
+        hex_xy = []
+        for plat, plng in zip(lats, lngs):
+            px, py = _latlon_to_pixel(plat, plng, zoom, tx0, ty0, tile_size)
+            hex_xy.append((px, py))
+        # Outline only, no fill — area inside stays visible
+        draw.polygon(hex_xy, outline="#0d3b4c", fill=None, width=4)
         canvas = canvas.resize((width, height), Image.Resampling.LANCZOS)
         buf = io.BytesIO()
         canvas.save(buf, format="PNG")
@@ -156,6 +200,8 @@ def build_report(
     temporal_artifacts: dict | None = None,
     year: int | None = None,
     confidential: bool = False,
+    gee_terrain_row: pd.Series | dict | None = None,
+    industry: str | None = None,
 ) -> bytes:
     """
     Generate premium PDF report. Same signature as generate_report.
@@ -257,6 +303,8 @@ def build_report(
     except Exception:
         loc_line = f"H3 cell {h3_index} · Resolution {h3_res}"
     elements.append(Paragraph(loc_line, custom_styles["body"]))
+    if industry and str(industry).strip():
+        elements.append(Paragraph(f"<b>Industry:</b> {_escape_html(str(industry).strip())}", custom_styles["body"]))
     elements.append(Spacer(1, 0.3 * cm))
 
     n_total = species_df["taxon_key"].nunique() if not species_df.empty else 0
@@ -270,15 +318,6 @@ def build_report(
     )
     dqi_val = f"{cell_metrics['dqi']:.2f}" if cell_metrics is not None and "dqi" in cell_metrics.index and pd.notna(cell_metrics.get("dqi")) else "—"
 
-    kpi_row = [
-        components.kpi_card("Species richness", str(n_total), theme),
-        components.kpi_card("Threatened", str(n_threatened), theme),
-        components.kpi_card("Invasive", str(n_invasive), theme),
-        components.kpi_card("DQI", dqi_val, theme),
-    ]
-    kpi_table = RlTable([kpi_row], colWidths=[4 * cm, 4 * cm, 4 * cm, 4 * cm])
-    kpi_table.setStyle([("VALIGN", (0, 0), (-1, -1), "TOP")])
-    elements.append(kpi_table)
     elements.append(Spacer(1, 0.5 * cm))
     elements.append(Paragraph(
         f"<i>Data: GBIF · IUCN Red List · OpenStreetMap</i>",
@@ -293,12 +332,12 @@ def build_report(
     # ── B) TABLE OF CONTENTS ─────────────────────────────────────────────────
     elements.append(Paragraph("Table of Contents", custom_styles["section_h1"]))
     toc_items = [
-        "1. Executive Summary",
-        "2. Location & Context",
-        "3. Biodiversity Overview",
-        "4. Threatened & Invasive Species",
-        "5. Temporal Signals",
-        "6. Land Cover & Infrastructure",
+        "1. Location & Context",
+        "2. Biodiversity Overview",
+        "3. Threatened & Invasive Species",
+        "4. Temporal Signals",
+        "5. Terrain & Land Cover (GEE)",
+        "6. Infrastructure (OSM)",
         "7. AI Insights",
         "8. Limitations & Methodology",
     ]
@@ -306,48 +345,8 @@ def build_report(
         elements.append(Paragraph(item, custom_styles["body"]))
     elements.append(PageBreak())
 
-    # ── C) EXECUTIVE SUMMARY ──────────────────────────────────────────────────
-    elements.append(Paragraph("1. Executive Summary", custom_styles["section_h1"]))
-
-    key_findings = [
-        f"Species richness: {n_total} distinct species in this cell.",
-        f"Threatened species: {n_threatened} with IUCN CR/EN/VU status.",
-        f"Invasive species: {n_invasive} flagged as invasive or introduced.",
-        f"Data Quality Index: {dqi_val} (0–1 scale).",
-    ]
-    if cell_metrics is not None and "avg_coordinate_uncertainty_m" in cell_metrics.index:
-        unc = cell_metrics.get("avg_coordinate_uncertainty_m")
-        if pd.notna(unc):
-            key_findings.append(f"Mean coordinate uncertainty: {float(unc):,.0f} m.")
-    key_findings.append("Recommend field verification for high-stakes decisions.")
-
-    for kf in key_findings[:6]:
-        elements.append(Paragraph(f"• {kf}", custom_styles["body"]))
-
-    elements.append(Spacer(1, 0.3 * cm))
-    hfp = osm_row.get("human_footprint_area_pct")
-    hfp_str = f"{float(hfp):.1f}%" if pd.notna(hfp) and hfp is not None else "—"
-    kpi_cards = [
-        components.kpi_card("Biodiversity", str(n_total), theme),
-        components.kpi_card("Threatened", str(n_threatened), theme),
-        components.kpi_card("Human footprint", hfp_str, theme, accent=False),
-    ]
-    elements.append(RlTable([kpi_cards], colWidths=[5 * cm, 5 * cm, 5 * cm]))
-    elements.append(Spacer(1, 0.3 * cm))
-    elements.append(components.callout_box(
-        "Recommended next steps",
-        [
-            "Review threatened species list and IUCN rationale.",
-            "Assess temporal trends for observation pressure and invasive expansion.",
-            "Conduct field verification for high-value or sensitive areas.",
-        ],
-        theme,
-        "info",
-    ))
-    elements.append(PageBreak())
-
-    # ── D) LOCATION & CONTEXT ────────────────────────────────────────────────
-    elements.append(Paragraph("2. Location & Context", custom_styles["section_h1"]))
+    # ── C) LOCATION & CONTEXT ────────────────────────────────────────────────
+    elements.append(Paragraph("1. Location & Context", custom_styles["section_h1"]))
 
     map_img = _render_map_image(h3_index)
     if map_img:
@@ -372,8 +371,8 @@ def build_report(
     elements.append(components.divider(theme))
     elements.append(components.spacer(0.5))
 
-    # ── E) BIODIVERSITY OVERVIEW ─────────────────────────────────────────────
-    elements.append(Paragraph("3. Biodiversity Overview", custom_styles["section_h1"]))
+    # ── D) BIODIVERSITY OVERVIEW ─────────────────────────────────────────────
+    elements.append(Paragraph("2. Biodiversity Overview", custom_styles["section_h1"]))
 
     if species_df.empty:
         elements.append(Paragraph("No species data available for this cell.", custom_styles["body"]))
@@ -404,8 +403,8 @@ def build_report(
         elements.append(_mt(top_data, [8, 2.5, 2, 2], theme.primary_light, {1}))
         elements.append(components.spacer(0.5))
 
-    # ── F) THREATENED & INVASIVE ──────────────────────────────────────────────
-    elements.append(Paragraph("4. Threatened & Invasive Species", custom_styles["section_h1"]))
+    # ── E) THREATENED & INVASIVE ──────────────────────────────────────────────
+    elements.append(Paragraph("3. Threatened & Invasive Species", custom_styles["section_h1"]))
 
     if not species_df.empty and "is_threatened" in species_df.columns:
         threatened = species_df[species_df["is_threatened"]].drop_duplicates("taxon_key")
@@ -455,8 +454,8 @@ def build_report(
 
     elements.append(PageBreak())
 
-    # ── G) TEMPORAL SIGNALS ───────────────────────────────────────────────────
-    elements.append(Paragraph("5. Temporal Signals", custom_styles["section_h1"]))
+    # ── F) TEMPORAL SIGNALS ───────────────────────────────────────────────────
+    elements.append(Paragraph("4. Temporal Signals", custom_styles["section_h1"]))
 
     if temporal_artifacts and temporal_artifacts.get("charts"):
         for title, chart_bytes in temporal_artifacts.get("charts", []):
@@ -481,54 +480,99 @@ def build_report(
 
     elements.append(PageBreak())
 
-    # ── H) LAND COVER & INFRASTRUCTURE ────────────────────────────────────────
-    elements.append(Paragraph("6. Land Cover & Infrastructure", custom_styles["section_h1"]))
+    # ── G) TERRAIN & LAND COVER (GEE) ─────────────────────────────────────────
+    elements.append(Paragraph("5. Terrain & Land Cover (GEE)", custom_styles["section_h1"]))
 
-    land_cover_chart = charts.render_land_cover_bar(osm_row)
-    if land_cover_chart:
-        elements.append(Image(io.BytesIO(land_cover_chart), width=14 * cm, height=8 * cm))
-        elements.append(Spacer(1, 0.3 * cm))
+    if gee_terrain_row is not None:
+        gee = gee_terrain_row if hasattr(gee_terrain_row, "get") else dict(gee_terrain_row)
+        elev = gee.get("elevation_mean")
+        slope = gee.get("slope_mean")
+        if pd.notna(elev) and elev is not None:
+            elements.append(Paragraph(f"<b>Elevation (mean):</b> {float(elev):.0f} m a.s.l.", custom_styles["body"]))
+        if pd.notna(slope) and slope is not None:
+            elements.append(Paragraph(f"<b>Slope (mean):</b> {float(slope):.1f}°", custom_styles["body"]))
+        if pd.notna(elev) or pd.notna(slope):
+            elements.append(Spacer(1, 0.2 * cm))
 
-    pct_metrics = [
-        ("waterbody_area_pct", "Waterbody"), ("waterway_area_pct", "Waterway"),
-        ("wetland_area_pct", "Wetland"), ("road_area_pct", "Roads"),
-        ("building_area_pct", "Buildings"), ("residential_area_pct", "Residential"),
-        ("agri_area_pct", "Agriculture"), ("natural_habitat_area_pct", "Natural habitat"),
-        ("protected_area_pct", "Protected"),
-    ]
-    pct_items = [(l, min(float(osm_row.get(c, 0) or 0), 100)) for c, l in pct_metrics if c in osm_row.index and pd.notna(osm_row.get(c)) and float(osm_row.get(c, 0) or 0) > 0]
-    pct_items.sort(key=lambda x: x[1], reverse=True)
-    if pct_items:
-        pct_data = [["Land cover", "%"]] + [[l, f"{v:.1f}%"] for l, v in pct_items]
-        elements.append(_mt(pct_data, [10, 3], theme.gray_500, {1}))
+        gee_pie = charts.render_gee_land_cover_pie(gee)
+        if gee_pie:
+            elements.append(Paragraph("<b>Land cover (Copernicus 100m)</b>", custom_styles["body"]))
+            elements.append(Image(io.BytesIO(gee_pie), width=14 * cm, height=9 * cm))
+            elements.append(Spacer(1, 0.3 * cm))
 
-    human_pct = osm_row.get("human_footprint_area_pct")
-    urban_pct = osm_row.get("urban_footprint_area_pct")
-    if pd.notna(human_pct) or pd.notna(urban_pct):
-        parts = []
-        if pd.notna(human_pct):
-            parts.append(f"Human footprint: {float(human_pct):.1f}%")
-        if pd.notna(urban_pct):
-            parts.append(f"Urban footprint: {float(urban_pct):.1f}%")
-        elements.append(Paragraph(f"<i>{' | '.join(parts)}</i>", custom_styles["caption"]))
-
-    transport_metrics = [
-        ("road_count", "Roads"), ("major_road_count", "Major roads"),
-        ("rail_count", "Rail"), ("building_count", "Buildings"),
-        ("waterway_count", "Waterways"), ("dam_count", "Dams"),
-        ("power_substation_count", "Substations"),
-    ]
-    transport_data = [["Infrastructure", "Count"]]
-    for col, label in transport_metrics:
-        if col in osm_row.index and pd.notna(osm_row.get(col)):
-            transport_data.append([label, f"{int(osm_row.get(col)):,}"])
-    if len(transport_data) > 1:
-        elements.append(Paragraph("<b>Infrastructure counts</b>", custom_styles["body"]))
-        elements.append(_mt(transport_data, [8, 4], theme.success, {1}))
+        lc_items = []
+        cols_iter = sorted(gee.keys()) if isinstance(gee, dict) else sorted(gee.index)
+        for col in cols_iter:
+            if not (str(col).startswith("lc_") and str(col).endswith("_pct")):
+                continue
+            val = gee.get(col, None) if isinstance(gee, dict) else gee.get(col, None)
+            if val is None or (hasattr(val, "__float__") and float(val) <= 0):
+                continue
+            try:
+                pct = float(val) * 100
+            except (TypeError, ValueError):
+                continue
+            cid_str = str(col).replace("lc_", "").replace("_pct", "")
+            try:
+                cid = int(cid_str)
+                label = charts.GEE_LC_LABELS.get(cid, col)
+            except ValueError:
+                label = col
+            lc_items.append((label, f"{pct:.1f}%", pct))
+        lc_items.sort(key=lambda x: -x[2])
+        if lc_items:
+            lc_data = [["Land cover type", "%"]] + [[l, p] for l, p, _ in lc_items]
+            elements.append(Paragraph("<b>Land cover breakdown</b>", custom_styles["body"]))
+            elements.append(_mt(lc_data, [10, 3], theme.primary_light, {1}))
+    else:
+        elements.append(Paragraph("No GEE terrain data available for this cell.", custom_styles["body"]))
 
     elements.append(PageBreak())
 
-    # ── I) AI INSIGHTS ───────────────────────────────────────────────────────
+    # ── H) INFRASTRUCTURE (OSM) ───────────────────────────────────────────────
+    elements.append(Paragraph("6. Infrastructure (OSM)", custom_styles["section_h1"]))
+
+    # Build infrastructure table: counts + per-km² where meaningful
+    hex_km2 = osm_row.get("hex_area_km2")
+    area_km2 = float(hex_km2) if pd.notna(hex_km2) and hex_km2 else None
+    infra_rows: list[list[str]] = []
+    infra_defs = [
+        ("hex_area_km2", "Hex area (km²)", "float"),
+        ("road_count", "Road segments", "int"),
+        ("road_count_per_km2", "Roads per km²", "float"),
+        ("major_road_count", "Major roads", "int"),
+        ("building_count", "Buildings", "int"),
+        ("building_count_per_km2", "Buildings per km²", "float"),
+        ("rail_count", "Rail segments", "int"),
+        ("waterway_count", "Waterways", "int"),
+        ("waterbody_count", "Waterbodies", "int"),
+        ("wetland_count", "Wetlands", "int"),
+        ("dam_count", "Dams", "int"),
+        ("power_plant_count", "Power plants", "int"),
+        ("power_substation_count", "Substations", "int"),
+        ("fuel_station_count", "Fuel stations", "int"),
+        ("industrial_area_count", "Industrial areas", "int"),
+        ("waste_site_count", "Waste sites", "int"),
+    ]
+    for col, label, fmt in infra_defs:
+        val = osm_row.get(col)
+        if val is None or (hasattr(val, "__float__") and pd.isna(val)):
+            continue
+        if fmt == "int":
+            infra_rows.append([label, f"{int(val):,}"])
+        elif fmt == "float":
+            infra_rows.append([label, f"{float(val):.2f}"])
+        else:
+            infra_rows.append([label, str(val)])
+    if infra_rows:
+        infra_data = [["Infrastructure", "Value"]] + infra_rows
+        elements.append(_mt(infra_data, [10, 2], theme.success, {1}))
+    else:
+        elements.append(Paragraph("No OSM infrastructure data for this cell.", custom_styles["body"]))
+
+    elements.append(PageBreak())
+
+    # ── I) AI INSIGHTS ────────────────────────────────────────────────────────
     elements.append(Paragraph("7. AI Insights", custom_styles["section_h1"]))
 
     if ai_insights and ai_insights.strip():
