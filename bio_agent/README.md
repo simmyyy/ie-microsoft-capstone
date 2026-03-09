@@ -105,6 +105,7 @@ Set `SECRET_ARN` to the secret ARN.
 | GetNeighborSummary | Aggregated stats for neighbor cells |
 | GetHexSpeciesContext | Top species, threatened, invasive |
 | GetOSMContext | Roads, ports, airports, protected areas |
+| GetTerrainCover | GEE terrain & land cover (elevation, slope, Copernicus %) |
 | GetInfoAboutThreatenedSpecies | IUCN info for threatened species |
 | GetSpeciesProfiles | Profile text for species (narrative) |
 

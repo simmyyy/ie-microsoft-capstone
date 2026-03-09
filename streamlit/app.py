@@ -54,6 +54,7 @@ if _missing:
 # ── Standard imports (all deps confirmed present) ─────────────────────────────
 import os
 import boto3  # noqa: E402
+from botocore.config import Config  # noqa: E402
 import folium  # noqa: E402
 import h3  # noqa: E402
 import pandas as pd  # noqa: E402
@@ -80,6 +81,8 @@ GOLD_SPECIES_DIM = "gold/gbif_species_dim"
 GOLD_IUCN_PROFILES = "gold/iucn_species_profiles"
 GOLD_OSM_HEX = "gold/osm_hex_features"
 GOLD_NATURE2000 = "gold/nature2000_cell_protection"
+GOLD_GEE_TERRAIN = "gold/gee_hex_terrain"
+GEE_TERRAIN_SNAPSHOT = "2019"
 NATURE2000_SNAPSHOT_DATE = "2026-02-27"
 MAX_PROTECTED_HEXES_DISPLAY = 50_000
 AWS_PROFILE = os.getenv("AWS_PROFILE", "") #"486717354268_PowerUserAccess"
@@ -133,7 +136,7 @@ MAX_HEXES_CAP = 20_000
 
 # Bedrock Agent (biodiversity risk analysis)
 BEDROCK_AGENT_ID = "1XGKFMJE8D"
-BEDROCK_AGENT_ALIAS_ID = "W1GAMBYYT9"  # ie-bio-agent alias ID
+BEDROCK_AGENT_ALIAS_ID = "LFOSLYI9QF"  # ie-bio-agent alias ID
 BEDROCK_REGION = "eu-west-2"
 
 
@@ -184,9 +187,11 @@ def get_duckdb_con():
 def _get_bedrock_agent_client():
     """Return Bedrock Agent Runtime client."""
     session = boto3.Session(profile_name=AWS_PROFILE)
+    cfg = Config(read_timeout=300, connect_timeout=30, retries={"mode": "adaptive"})
     return session.client(
         "bedrock-agent-runtime",
         region_name=BEDROCK_REGION,
+        config=cfg,
     )
 
 
@@ -394,6 +399,27 @@ def load_nature2000_protected_areas(h3_res: int) -> pd.DataFrame:
         with fs.open(path, "rb") as fh:
             dfs.append(pd.read_parquet(fh))
     df = pd.concat(dfs, ignore_index=True)
+    return df
+
+
+@st.cache_data(ttl=600, show_spinner="Loading GEE terrain…")
+def load_gee_terrain(h3_res: int) -> pd.DataFrame:
+    """Load gold gee_hex_terrain: elevation_mean, slope_mean, lc_*_pct (land cover %)."""
+    fs = get_s3fs()
+    raw_path = (
+        f"{S3_BUCKET}/{GOLD_GEE_TERRAIN}"
+        f"/country={COUNTRY}/snapshot={GEE_TERRAIN_SNAPSHOT}/h3_resolution={h3_res}"
+    )
+    files = fs.glob(f"{raw_path}/*.parquet")
+    if not files:
+        return pd.DataFrame()
+    dfs = []
+    for path in files:
+        with fs.open(path, "rb") as fh:
+            dfs.append(pd.read_parquet(fh))
+    df = pd.concat(dfs, ignore_index=True)
+    if "h3_id" in df.columns and "h3_index" not in df.columns:
+        df = df.rename(columns={"h3_id": "h3_index"})
     return df
 
 
@@ -796,7 +822,7 @@ def build_geojson_protected_areas(df: pd.DataFrame) -> dict[str, Any]:
         return {"type": "FeatureCollection", "features": []}
 
     COLOR_PROTECTED = "#22c55e"  # green
-    COLOR_NEAR = "#eab308"       # yellow
+    COLOR_NEAR = "#eab308"  # yellow
 
     features: list[dict] = []
     for record in df.to_dict("records"):
@@ -857,7 +883,12 @@ def make_map_protected_areas(
                 "fillOpacity": 0.85,
             },
             tooltip=folium.GeoJsonTooltip(
-                fields=["is_protected_area", "nearest_protected_distance", "site_name", "nearest_site_name"],
+                fields=[
+                    "is_protected_area",
+                    "nearest_protected_distance",
+                    "site_name",
+                    "nearest_site_name",
+                ],
                 aliases=["Status", "Distance (hexes)", "Site", "Nearest site"],
                 localize=True,
             ),
@@ -1680,7 +1711,9 @@ def render_species_map_tab(h3_res: int, year: int) -> None:
 def render_protected_areas_tab(h3_res: int) -> None:
     """Map of Natura 2000 protected areas: green = protected, yellow = near. Click hex for details."""
     st.subheader("🛡️ Protected Areas (Natura 2000)")
-    st.caption("Green = inside protected area · Yellow = within k hexes of protected. Click a hex for details.")
+    st.caption(
+        "Green = inside protected area · Yellow = within k hexes of protected. Click a hex for details."
+    )
 
     with st.spinner("Loading protected areas…"):
         df_full = load_nature2000_protected_areas(h3_res)
@@ -1753,7 +1786,9 @@ def render_protected_areas_tab(h3_res: int) -> None:
             h3_id = row.get("h3_id", "—")
             is_prot = str(row.get("is_protected_area", "")).lower() == "yes"
 
-            st.markdown(f"**H3 ID** `{h3_id}` · **Status** {'🟢 Protected' if is_prot else '🟡 Near protected'}")
+            st.markdown(
+                f"**H3 ID** `{h3_id}` · **Status** {'🟢 Protected' if is_prot else '🟡 Near protected'}"
+            )
 
             if is_prot:
                 st.markdown("#### Protected area")
@@ -1769,7 +1804,9 @@ def render_protected_areas_tab(h3_res: int) -> None:
                 ]
             else:
                 dist = row.get("nearest_protected_distance")
-                st.markdown(f"**Distance to nearest protected:** {dist} hex{'es' if dist != 1 else ''}")
+                st.markdown(
+                    f"**Distance to nearest protected:** {dist} hex{'es' if dist != 1 else ''}"
+                )
                 st.markdown("#### Nearest protected area")
                 cols = [
                     ("nearest_site_code", "Site code"),
@@ -1787,6 +1824,127 @@ def render_protected_areas_tab(h3_res: int) -> None:
                     st.markdown(f"**{label}** {val}")
     else:
         st.caption("Click a hex on the map to see details.")
+
+
+# Land cover class IDs → human-readable labels (Copernicus Level 1)
+LC_CLASS_LABELS: dict[int, str] = {
+    0: "Unknown",
+    20: "Shrubs",
+    30: "Herbaceous",
+    40: "Crops",
+    50: "Urban",
+    60: "Bare",
+    70: "Snow/ice",
+    80: "Water (permanent)",
+    90: "Wetland",
+    100: "Moss",
+    111: "Forest (evergreen needle)",
+    112: "Forest (evergreen broad)",
+    113: "Forest (deciduous needle)",
+    114: "Forest (deciduous broad)",
+    115: "Forest (mixed)",
+    116: "Forest (other)",
+    121: "Open forest (needle)",
+    122: "Open forest (broad)",
+    123: "Open forest (deciduous needle)",
+    124: "Open forest (deciduous broad)",
+    125: "Open forest (mixed)",
+    126: "Open forest (other)",
+    200: "Ocean",
+}
+
+
+def render_terrain_tab(chosen_hexes: set[str], h3_res: int) -> None:
+    """Terrain summary for chosen hexes (elevation, slope, land cover %). No map – like Analysis tab."""
+    if len(chosen_hexes) < 1:
+        st.info(
+            "Select 1–6 hexes on the **Map** tab to see terrain summary. "
+            "Click hexes to add. Use Clear all to remove."
+        )
+        return
+
+    st.caption("Switch back to **Map** tab to change selection.")
+    hex_list = sorted(chosen_hexes)
+
+    with st.spinner("Loading terrain data…"):
+        df_full = load_gee_terrain(h3_res)
+
+    if df_full.empty:
+        st.warning(
+            "No GEE terrain data found. Run `gee_hex_terrain.ipynb` to populate gold/gee_hex_terrain."
+        )
+        return
+
+    skip_cols = {"h3_index", "h3_resolution"}
+    elev_col = "elevation_mean" if "elevation_mean" in df_full.columns else None
+    slope_col = "slope_mean" if "slope_mean" in df_full.columns else None
+    lc_cols = sorted(
+        [c for c in df_full.columns if c.startswith("lc_") and c.endswith("_pct")]
+    )
+
+    for h3_idx in hex_list:
+        row_df = df_full[df_full["h3_index"] == h3_idx]
+        if row_df.empty:
+            with st.expander(f"**{h3_idx}** — no terrain data"):
+                st.caption("No GEE terrain data for this hex.")
+            continue
+
+        row = row_df.iloc[0].to_dict()
+        table_rows: list[tuple[str, str]] = []
+
+        if elev_col:
+            val = row.get(elev_col)
+            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                fval = float(val)
+                table_rows.append(("Elevation (mean)", f"{fval:.0f} m"))
+        if slope_col:
+            val = row.get(slope_col)
+            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                fval = float(val)
+                table_rows.append(("Slope (mean)", f"{fval:.1f}°"))
+
+        lc_entries = []
+        for c in lc_cols:
+            val = row.get(c)
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                continue
+            try:
+                fval = float(val)
+            except (TypeError, ValueError):
+                continue
+            cid_str = c.replace("lc_", "").replace("_pct", "")
+            try:
+                cid = int(cid_str)
+                label = LC_CLASS_LABELS.get(cid, c)
+            except ValueError:
+                label = c
+            lc_entries.append((f"Land cover: {label}", f"{fval * 100:.1f}%", fval))
+        for label, pct_str, _ in sorted(lc_entries, key=lambda x: -x[2]):
+            table_rows.append((label, pct_str))
+
+        # Any other numeric columns (e.g. from future gold schema)
+        shown = {elev_col, slope_col} | set(lc_cols)
+        for c in df_full.columns:
+            if c in skip_cols or c in shown:
+                continue
+            val = row.get(c)
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                continue
+            try:
+                fval = float(val)
+            except (TypeError, ValueError):
+                continue
+            table_rows.append((c.replace("_", " ").title(), f"{fval:.2f}"))
+
+        elev_val = next((v for k, v in table_rows if "Elevation" in k), "—")
+        slope_val = next((v for k, v in table_rows if "Slope" in k), "—")
+
+        with st.expander(f"**{h3_idx}** — elev {elev_val} · slope {slope_val}"):
+            if table_rows:
+                df_summary = pd.DataFrame(table_rows, columns=["Metric", "Value"])
+                st.dataframe(df_summary, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No terrain data.")
 
 
 # OSM report: metrics to show (excludes coastline_count, port/airport, amenity, admin_boundary, etc.)
@@ -1985,7 +2143,16 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
     st.subheader("📄 Generate report")
     st.caption(
         "Create a PDF report with location map, species data (threatened/invasive), "
-        "IUCN rationale, and OSM infrastructure summary."
+        "IUCN rationale, terrain (elevation, land cover), and OSM infrastructure summary."
+    )
+
+    industry = (
+        st.text_input(
+            "Industry (optional)",
+            placeholder="e.g. Agriculture, Mining, Renewable energy, Tourism",
+            key="report_industry",
+        ).strip()
+        or None
     )
 
     report_hex = (
@@ -2014,8 +2181,11 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                 ai_insights = None
                 try:
                     with st.spinner("Fetching AI insights…"):
+                        industry_ctx = (
+                            f" Industry context: {industry}." if industry else ""
+                        )
                         prompt = (
-                            f"Analyze biodiversity risk for hex {report_hex}, resolution {h3_res}. "
+                            f"Analyze biodiversity risk for hex {report_hex}, resolution {h3_res}.{industry_ctx} "
                             "Provide a structured report in English with: "
                             "1. Executive Summary (2-4 sentences, risk tier: LOW/MODERATE/HIGH/CRITICAL), "
                             "2. Key Metrics (table: Metric | Value | Interpretation), "
@@ -2071,6 +2241,12 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                 osm_row = (
                     osm_row.iloc[0] if not osm_row.empty else pd.Series(dtype=object)
                 )
+
+                gee_terrain_df = load_gee_terrain(h3_res)
+                gee_terrain_row = None
+                if not gee_terrain_df.empty and "h3_index" in gee_terrain_df.columns:
+                    gt = gee_terrain_df[gee_terrain_df["h3_index"] == report_hex]
+                    gee_terrain_row = gt.iloc[0] if not gt.empty else None
 
                 species_for_hex = h3_df[h3_df["h3_index"] == report_hex]
 
@@ -2130,6 +2306,9 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                     name_col=name_col,
                     ai_insights=ai_insights,
                     temporal_artifacts=temporal_artifacts,
+                    year=year,
+                    gee_terrain_row=gee_terrain_row,
+                    industry=industry,
                 )
                 st.session_state["report_pdf"] = pdf_bytes
                 st.session_state["report_hex"] = report_hex
@@ -2443,8 +2622,17 @@ def main() -> None:
         chat_col = None
 
     with main_col:
-        tab_map, tab_analysis, tab_species, tab_protected, tab_osm = st.tabs(
-            ["🗺️ Map", "📊 Analysis", "🔍 Species map", "🛡️ Protected Areas", "🏗️ OSM Report"]
+        tab_map, tab_analysis, tab_species, tab_protected, tab_terrain, tab_osm = (
+            st.tabs(
+                [
+                    "🗺️ Map",
+                    "📊 Analysis",
+                    "🔍 Species map",
+                    "🛡️ Protected Areas",
+                    "⛰️ Terrain summary",
+                    "🏗️ OSM Report",
+                ]
+            )
         )
 
         with tab_map:
@@ -2465,6 +2653,8 @@ def main() -> None:
             render_species_map_tab(h3_res, selected_year)
         with tab_protected:
             render_protected_areas_tab(h3_res)
+        with tab_terrain:
+            render_terrain_tab(ss["chosen_hexes"], h3_res)
         with tab_osm:
             render_osm_report_tab(ss["chosen_hexes"], h3_res, selected_year)
 

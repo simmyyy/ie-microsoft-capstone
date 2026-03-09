@@ -8,7 +8,7 @@ import h3
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # --- Exact CSV path (we'll pass it via env, with a default matching your file name) ---
-DEFAULT_CSV = REPO_ROOT / "data" / "gee" / "features" / "gee_features_grid15km_2024-01-01_to_2025-12-31_20260305_201529.csv"
+DEFAULT_CSV = REPO_ROOT / "data" / "gee" / "features" / "gee_sp_pt_grid15km_2024-01-01_to_2024-12-31_20260307_162031.csv"
 CSV_PATH = Path(os.environ.get("GEE_CSV_PATH", str(DEFAULT_CSV)))
 
 SILVER_DIR = REPO_ROOT / "data" / "gee" / "silver" / "gee_features"
@@ -18,7 +18,7 @@ COUNTRY = os.environ.get("GEE_COUNTRY", "ES_PT")
 YEAR = int(os.environ.get("GEE_YEAR", "2024"))  # tag for partitioning; we'll improve later
 SNAPSHOT_DATE = os.environ.get("GEE_SNAPSHOT_DATE", str(date.today()))
 PERIOD_START = os.environ.get("GEE_PERIOD_START", "2024-01-01")
-PERIOD_END = os.environ.get("GEE_PERIOD_END", "2025-12-31")
+PERIOD_END = os.environ.get("GEE_PERIOD_END", "2024-12-31")
 
 
 def add_h3_cols(df: pd.DataFrame) -> pd.DataFrame:

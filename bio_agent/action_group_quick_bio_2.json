@@ -44,6 +44,23 @@
     "requireConfirmation": "DISABLED"
   },
   {
+    "name": "GetTerrainCover",
+    "description": "GEE terrain and land cover for an H3 cell: elevation, slope, Copernicus land cover percentages (forest, crops, urban, etc.).",
+    "parameters": {
+      "h3_id": {
+        "description": "H3 cell index",
+        "required": "True",
+        "type": "String"
+      },
+      "h3_res": {
+        "description": "H3 resolution (6-9)",
+        "required": "True",
+        "type": "String"
+      }
+    },
+    "requireConfirmation": "DISABLED"
+  },
+  {
     "name": "GetInfoAboutThreatenedSpecies",
     "description": "IUCN Red List info for threatened species. Provide h3_id+h3_res to get threatened from hex, or species_ids_or_names to look up specific species.",
     "parameters": {

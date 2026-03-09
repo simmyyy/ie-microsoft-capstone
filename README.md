@@ -1,643 +1,396 @@
-# GBIF Occurrence Data — README
+<p align="center">
+  <img src="pictures/hexeco.png" alt="HEXECO - Environmental Risk Intelligence Platform" width="400">
+</p>
 
-## How to execute this project
+<h1 align="center">HEXECO — Biodiversity Intelligence Platform</h1>
 
-### Setup (Python virtual environment)
+<p align="center"><em>A production-grade biodiversity data platform</em> that ingests GBIF occurrence data, enriches it with environmental and geospatial features, trains machine learning models for species prediction and invasive species classification, and delivers an interactive H3-based Biodiversity Explorer for Spain and Portugal.</p>
 
-From the repo root:
+---
+
+## Table of Contents
+
+1. [Project Introduction](#project-introduction)
+2. [Proposed Technical Architecture](#proposed-technical-architecture)
+3. [H3 Geospatial Standard](#h3-geospatial-standard)
+4. [Directory Structure](#directory-structure)
+5. [Technology Stack](#technology-stack)
+6. [Services & Components](#services--components)
+7. [Data Pipeline & Datasets](#data-pipeline--datasets)
+8. [Machine Learning](#machine-learning)
+9. [Getting Started](#getting-started)
+10. [GBIF Data Reference](#gbif-data-reference)
+
+---
+
+## Project Introduction
+
+This capstone project delivers an **end-to-end biodiversity intelligence system** that transforms raw occurrence data from the Global Biodiversity Information Facility (GBIF) into actionable insights for conservation, policy, and research. The platform spans:
+
+- **Data ingestion** — GBIF bulk downloads, OpenStreetMap (OSM), Google Earth Engine (GEE), Natura 2000, IUCN Red List
+- **ETL pipeline** — Bronze → Silver → Gold lakehouse architecture on AWS S3
+- **Spatial indexing** — Uber H3 hexagonal grid for uniform, hierarchical aggregation
+- **Machine learning** — Species distribution prediction (XGBoost, LightGBM, MLP), invasive species image classification (EfficientNet-B0)
+- **Interactive application** — Streamlit Biodiversity Explorer with H3 choropleth maps, species search, and IUCN profiles
+
+**Geographic focus:** Spain and Portugal (Iberian Peninsula), with invasive species image classifier focused on the Galicia coast.
+
+<p align="center">
+  <img src="pictures/who_did_this.png" alt="Who did this" width="600">
+</p>
+
+**Use cases:** Conservation planning, Area of Habitat (AoH) mapping, invasive species early detection, TNFD-style biodiversity screening, species richness and threat hotspot analysis.
+
+---
+
+## Proposed Technical Architecture
+
+The system follows a **lakehouse** design: raw data flows through Bronze, Silver, and Gold layers, with H3 as the unifying spatial index. Processed data feeds ML models and the Streamlit app.
+
+<p align="center">
+  <img src="proposed_tech_architecture.png" alt="Proposed Technical Architecture" width="700">
+</p>
+
+### Architecture Overview
+
+| Component | Description |
+|-----------|-------------|
+| **Data Sources** | GBIF (species occurrences), OpenStreetMap (infrastructure, land use), Google Earth Engine (terrain, land cover), Natura 2000 (protected areas), IUCN Red List (threat assessments) |
+| **Bronze Layer** | Raw GBIF downloads (SIMPLE_PARQUET), enriched with IUCN threat flags and invasive/introduced status. Stored in `s3://ie-datalake/bronze/gbif/` |
+| **Silver Layer** | Cleaned coordinates, H3 indices at resolutions 6–9. Stored in `s3://ie-datalake/silver/gbif/` |
+| **Gold Layer** | Cell-level biodiversity metrics (`gbif_cell_metrics`), species dimension and H3 mapping (`gbif_species_dim`, `gbif_species_h3_mapping`), OSM hex features (`osm_hex_features`), Natura 2000 protection (`nature2000_cell_protection`), GEE terrain (`gee_hex_terrain`), IUCN profiles (`iucn_species_profiles`) |
+| **S3 Lakehouse** | All layers stored as snappy-compressed Parquet, partitioned by `country`, `year`, and `h3_resolution` |
+| **ML & Analytics** | DuckDB for feature generation; XGBoost/LightGBM/MLP for species prediction; EfficientNet-B0 for invasive species image classification |
+| **Biodiversity Explorer** | Streamlit app with Folium map, H3 overlay, species richness and threat metrics, species search with IUCN rationale |
+
+### Data Flow
+
+```
+GBIF API (occurrences)  →  Bronze  →  Silver (H3 index)  →  Gold (metrics, species mapping)
+OSM PBF                 →  Bronze  →  Silver (features)  →  Gold (osm_hex_features)
+GEE                     →  Gold (gee_hex_terrain)
+Natura 2000             →  Gold (nature2000_cell_protection)
+IUCN API                →  Silver  →  Gold (iucn_species_profiles)
+```
+
+---
+
+## H3 Geospatial Standard
+
+### What Is H3?
+
+**H3** is Uber's [hierarchical hexagonal grid system](https://h3geo.org/) for indexing the Earth's surface. It provides a **global, discrete, hierarchical, and equal-area** grid that simplifies spatial analysis and visualization.
+
+### Why We Use H3
+
+| Advantage | Explanation |
+|-----------|-------------|
+| **Uniform analysis** | Hexagons have equal area at each resolution, avoiding the distortion of lat/lon grids near the poles |
+| **Hierarchical** | Coarser resolutions are parents of finer ones (`h3.cell_to_parent`). One index encodes multiple zoom levels |
+| **Discrete** | Every point maps to exactly one cell. No overlapping polygons or edge effects |
+| **ML-friendly** | H3-indexed locations can be used as categorical features; no need for continuous lat/lon in models |
+| **Consistent joins** | All datasets (GBIF, OSM, GEE, Natura 2000) share the same `h3_index` key for fast spatial joins |
+
+### H3 Resolutions in This Project
+
+| Resolution | Approx. area per hex | Use case |
+|------------|----------------------|----------|
+| **9** | ~0.1 km² | Fine-grained point lookup, individual habitat patches |
+| **8** | ~0.7 km² | Neighbourhood scale |
+| **7** | ~5 km² | Local area (municipality); **primary for ML** |
+| **6** | ~36 km² | Regional scale (county, comarca) |
+
+### How H3 Is Used
+
+1. **Silver layer:** Each occurrence gets `h3_9` from `(lat, lon)` via `h3.latlng_to_cell`. Coarser resolutions derived with `h3.cell_to_parent(h3_9, res)`.
+2. **Gold layer:** Metrics aggregated per `(h3_index, h3_resolution, country, year)`.
+3. **Streamlit:** Map zoom level selects resolution (6 or 7 in demo mode).
+4. **Species predictor:** Training and prediction at resolution 7 (~5 km²) for Spain.
+
+---
+
+## Directory Structure
+
+<p align="center">
+  <img src="pictures/does_it_live_in_spain.png" alt="Does it live in Spain" width="600">
+</p>
+
+```
+ie-microsoft-capstone/
+├── src/                          # ETL pipeline (Bronze → Silver → Gold)
+│   ├── gbif_etl_job.ipynb        # Bronze: GBIF download + IUCN/invasive enrichment
+│   ├── gbif_bronze_to_silver.ipynb
+│   ├── gbif_silver_to_gold.ipynb
+│   ├── gbif_silver_to_gold_dim.ipynb
+│   ├── iucn_species_enrichment.ipynb
+│   ├── iucn_silver_to_gold.ipynb
+│   ├── notebooks/                # OSM, GEE, Natura2000, gold→PostgreSQL
+│   └── README.md
+├── gbif_species_predictor/        # ML species distribution prediction
+│   ├── 01_species_predictor.ipynb
+│   ├── 02_species_showcase_map.ipynb
+│   ├── 03_area_of_habitat.ipynb
+│   ├── output/                   # XGBoost model, AoH maps, SHAP
+│   └── README.md
+├── gbif_deep_learning/           # Invasive species image classifier
+│   ├── 01_data_collection.ipynb
+│   ├── 02_train_classifier.ipynb
+│   ├── 03_species_in_bbox.ipynb
+│   ├── app/                      # Streamlit inference app
+│   ├── models/                   # EfficientNet checkpoint, confusion matrix
+│   └── README.md
+├── streamlit/                    # Biodiversity Explorer (main app)
+│   ├── app.py
+│   ├── requirements.txt
+│   └── README.md
+├── eda/                          # Exploratory notebooks
+│   ├── gbif_eda.ipynb
+│   ├── oil_company_screening.ipynb
+│   └── biodiversity_gbif_profesor_demo.ipynb
+├── iucn_enrichment/              # IUCN API cache, species profiles
+├── bio_agent/                    # AI agent tools
+├── data/                         # Cached downloads, OSM, GEE
+├── pictures/                     # Exported figures
+├── proposed_tech_architecture.png
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Technology Stack
+
+| Layer | Technologies |
+|-------|--------------|
+| **Data processing** | Python, Pandas, PyArrow, DuckDB |
+| **Geospatial** | H3, GeoPandas, Shapely, Folium |
+| **Cloud** | AWS S3 (`ie-datalake`), boto3, s3fs |
+| **ETL** | Jupyter notebooks, PyArrow native S3 |
+| **ML** | XGBoost, LightGBM, PyTorch, scikit-learn, SHAP |
+| **Deep learning** | PyTorch, torchvision (EfficientNet-B0), OpenCV |
+| **Web** | Streamlit, streamlit-folium |
+| **APIs** | pygbif (GBIF), IUCN Red List API |
+
+---
+
+## Services & Components
+
+### 1. ETL Pipeline (`src/`)
+
+| Notebook | Purpose |
+|----------|---------|
+| `gbif_etl_job.ipynb` | Download GBIF SIMPLE_PARQUET by country/year; enrich with IUCN threat and invasive flags |
+| `gbif_bronze_to_silver.ipynb` | Clean coordinates; add H3 indices (res 6–9) |
+| `gbif_silver_to_gold.ipynb` | Aggregate to cell metrics (species richness, Shannon, threat counts, DQI) |
+| `gbif_silver_to_gold_dim.ipynb` | Build species dimension and H3–species mapping |
+| `iucn_species_enrichment.ipynb` | Fetch IUCN Red List assessments for threatened species |
+| `iucn_silver_to_gold.ipynb` | Convert IUCN JSON → Parquet |
+
+See [`src/README.md`](src/README.md) for full pipeline documentation.
+
+### 2. Biodiversity Explorer (`streamlit/`)
+
+Interactive map for exploring H3-based biodiversity metrics over Spain:
+
+- **Map tab:** Folium map with H3 hex overlay; colour by species richness, Shannon diversity, threatened species count, etc.
+- **Analysis tab:** Species per selected hex; IUCN rationale for threatened species
+- **Species map tab:** Search by name → map of H3 cells where species occurs; IUCN panel when threatened
+
+Run: `streamlit run streamlit/app.py`
+
+See [`streamlit/README.md`](streamlit/README.md).
+
+### 3. Species Predictor (`gbif_species_predictor/`)
+
+Multi-label ML system predicting which **threatened species** (IUCN CR, EN, VU) are likely present in an H3 cell. Uses OSM, GEE terrain, land cover, and Natura 2000 features. Produces **Area of Habitat (AoH-proxy)** maps.
+
+Models: XGBoost (primary), LightGBM, MLP, K-NN. Best macro PR-AUC ~0.316 (XGBoost).
+
+See [`gbif_species_predictor/README.md`](gbif_species_predictor/README.md).
+
+### 4. Invasive Species Image Classifier (`gbif_deep_learning/`)
+
+EfficientNet-B0 transfer learning on GBIF images. Classifies 6 invasive plant species + 1 non-invasive class. ~81% validation accuracy. Includes Streamlit inference app.
+
+See [`gbif_deep_learning/README.md`](gbif_deep_learning/README.md).
+
+---
+
+## Data Pipeline & Datasets
+
+### Gold Layer (S3 `ie-datalake`)
+
+| Dataset | Path | Description |
+|---------|------|-------------|
+| **gbif_cell_metrics** | `gold/gbif_cell_metrics/` | Per-hex biodiversity metrics: observation_count, species_richness_cell, shannon_H, n_threatened_species, threat_score_weighted, dqi, etc. |
+| **gbif_species_dim** | `gold/gbif_species_dim/` | Species lookup: taxon_key, species_name, occurrence_count, is_threatened, is_invasive |
+| **gbif_species_h3_mapping** | `gold/gbif_species_h3_mapping/` | Hex–species occurrence mapping for region lookups and per-species maps |
+| **osm_hex_features** | `gold/osm_hex_features/` | OSM-derived features per hex: road_count, building_area_pct, protected_area_pct, human_footprint_area_pct, etc. |
+| **nature2000_cell_protection** | `gold/nature2000_cell_protection/` | Natura 2000: is_protected_area, nearest_protected_distance |
+| **gee_hex_terrain** | `gold/gee_hex_terrain/` | Elevation, slope, land cover (Copernicus CGLS) from Google Earth Engine |
+| **iucn_species_profiles** | `gold/iucn_species_profiles/` | IUCN Red List profiles: rationale, habitat, threats, conservation |
+
+### Join Example
+
+```sql
+SELECT g.h3_index, g.species_richness_cell, g.n_threatened_species,
+       o.protected_area_pct, o.road_count_per_km2, n.is_protected_area
+FROM gbif_cell_metrics g
+JOIN osm_hex_features o ON g.h3_index = o.h3_index AND g.h3_resolution = o.h3_resolution
+LEFT JOIN nature2000_cell_protection n ON g.h3_index = n.h3_id
+WHERE g.country = 'ES' AND g.year = 2024 AND g.h3_resolution = 7;
+```
+
+---
+
+## Machine Learning
+
+### Species Distribution Prediction
+
+<p align="center">
+  <img src="pictures/our_favourite_specie.png" alt="Our favourite species — Lanius meridionalis (Southern Grey Shrike)" width="500">
+</p>
+
+- **Target:** Top 10 threatened species (IUCN CR/EN/VU) + Lanius meridionalis (Southern Grey Shrike)
+- **Features:** 40 environmental features (OSM, GEE terrain/land cover, Natura 2000)
+- **Split:** Spatial block split (H3 resolution 5) to avoid autocorrelation
+- **Models:** XGBoost (best), LightGBM, MLP, K-NN
+- **Output:** Top-N species with probabilities per hex; AoH-proxy maps
+
+### Invasive Species Image Classification
+
+- **Target:** 6 invasive plant species + non-invasive class (Galicia coast)
+- **Architecture:** EfficientNet-B0, transfer learning from ImageNet
+- **Data:** GBIF occurrence images, quality-filtered (sharpness, size, aspect ratio)
+- **Output:** Class probabilities, Grad-CAM interpretability
+
+---
+
+## Getting Started
+
+### Setup
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
 pip install -r requirements.txt
-```
-
-If you don’t have Jupyter installed already, install it:
-
-```bash
 pip install jupyterlab
 ```
 
-Then start Jupyter:
+### Credentials
 
-```bash
-jupyter lab
-```
+- **GBIF:** Set `GBIF_USER`, `GBIF_PWD`, `GBIF_EMAIL` in `.env` (for download jobs)
+- **IUCN:** Set `IUCN_API_KEY` in `.env` (for species enrichment)
+- **AWS:** `aws sso login --profile 486717354268_PowerUserAccess`
 
-### Notebooks (recommended order)
+### Run Order
 
-- **`gbif_eda.ipynb`**: GBIF download/caching + EDA (missingness, time trends, licenses/provenance, monthly counts, Europe country counts, threatened species).
-- **`oil_company_screening.ipynb`**: TNFD-style screening demo that combines GBIF occurrences with industrial assets (OpenStreetMap/Overpass), proximity metrics, and interactive mapping.
-- **`biodiversity_gbif_profesor_demo.ipynb`**: additional demo notebook.
+1. **ETL:** `gbif_etl_job.ipynb` → `gbif_bronze_to_silver.ipynb` → `gbif_silver_to_gold.ipynb` → `gbif_silver_to_gold_dim.ipynb`
+2. **Streamlit:** `streamlit run streamlit/app.py`
+3. **Species predictor:** `gbif_species_predictor/01_species_predictor.ipynb`
+4. **Invasive classifier:** `gbif_deep_learning/01_data_collection.ipynb` → `02_train_classifier.ipynb`
 
-### Project structure (high level)
+---
 
-- **`data/`**: cached GBIF downloads (`.jsonl.gz`), derived CSVs, OSM asset cache, and exported HTML maps.
-- **`pictures/`**: exported figures used in this README.
-- **`requirements.txt`**: Python dependencies.
+## GBIF Data Reference
 
-## Overview: what GBIF data is, how it’s published, and licensing
+The sections below provide a practical reference for working with GBIF data: overview, caveats, API parameters, output schema, and licensing.
 
-**GBIF (Global Biodiversity Information Facility)** is an open infrastructure that aggregates biodiversity data published by many organizations worldwide. The most common data product you’ll see in GBIF is an **occurrence record** — an observation or specimen record describing **what** was observed/collected, **where**, and **when** (plus lots of metadata).
+### Overview: What GBIF Data Is
 
-### Important caveat: GBIF occurrence counts can “cliff drop”
+**GBIF (Global Biodiversity Information Facility)** is an open infrastructure that aggregates biodiversity data published by many organizations worldwide. The most common data product is an **occurrence record** — an observation or specimen record describing **what** was observed, **where**, and **when** (plus metadata).
 
-When you query GBIF month-by-month (e.g. using `eventDate` windows and the API `count`), you may observe **sudden step changes** in the number of records returned for a region — even for **all taxa**.
+### Important Caveat: GBIF Occurrence Counts Can "Cliff Drop"
 
-This is **usually not evidence of a real ecological collapse**. In most cases it reflects **data availability and publishing/processing effects**, for example:
-- a dominant **publisher/dataset** changes what it publishes into GBIF (pause, delay, scope change)
-- **ingestion/processing cadence** (batch updates, backfills)
-- shifts in **reporting effort** (platform usage, observer activity)
+When you query GBIF month-by-month (e.g. using `eventDate` windows and the API `count`), you may observe **sudden step changes** in the number of records returned — even for **all taxa**. This is usually **not evidence of a real ecological collapse**. In most cases it reflects **data availability and publishing/processing effects** (publisher changes, ingestion cadence, reporting effort).
 
-Example from this repo (Madrid ~30 km): “all taxa” and a single species show a sharp drop around 2025-01:
+**Takeaway:** Treat GBIF occurrence counts as a signal of *records in GBIF*, not a direct proxy for *population size*.
 
-![Monthly GBIF counts: all taxa vs Pica pica](pictures/gbif_monthly_drop_all_taxa_vs_pica_pica_eventDate.png)
+### Fast "Prompting" for Occurrences: `limit=0` Counts
 
-**Takeaway**: treat GBIF occurrence counts as a signal of *records in GBIF*, not a direct proxy for *population size*. Always validate with provenance (`datasetKey`, `institutionCode`, `references`) and, if needed, compare `eventDate` (observed) vs `lastInterpreted` (processed).
-
-### Fast “prompting” for occurrences: `limit=0` counts (and richness estimates)
-
-You don’t need to download rows to answer basic scoping questions like:
-- **How many occurrence records exist** for a given filter set?
-- **How does record volume compare** across regions/countries/time windows?
-
-GBIF’s Occurrence Search API returns an exact **`count`** for a query even when `limit=0` (i.e., return no rows, only metadata).
-
-#### What does “record count” mean in GBIF?
-
-- **1 record = 1 occurrence record** (one published observation/specimen/event entry), not an aggregated statistic.
-- `resp["count"] = N` means **N occurrence records** match your filters (country/bbox/taxon/date/etc.).
-- This is **not** “number of animals/plants”. Repeated observations, duplicates, and reporting effort can strongly affect counts.
-- Some records include **`individualCount`**, but it is often missing/inconsistent; GBIF’s `count` does **not** sum `individualCount`.
-
-Practical example: count occurrences by **country** (ISO2), optionally restricted to records with coordinates and/or a time window:
+You don't need to download rows to answer basic scoping questions. GBIF's Occurrence Search API returns an exact **`count`** for a query even when `limit=0`.
 
 ```python
 from pygbif import occurrences
-
-resp = occurrences.search(
-    country="ES",          # Spain (ISO2)
-    hasCoordinate=True,    # optional
-    eventDate=None,        # or "2024-01-01,2024-12-31"
-    limit=0,               # count-only
-)
+resp = occurrences.search(country="ES", hasCoordinate=True, limit=0)
 total_records = resp["count"]
 ```
 
-About **species richness (unique species)**:
-- A pure `count` does **not** directly tell you richness.
-- You can estimate richness by either:
-  - downloading occurrences for the slice and counting unique `species`/`speciesKey` locally (exact for the downloaded set), or
-  - using GBIF **facets** on `speciesKey` (useful for exploration, but it can be incomplete if you don’t retrieve all facet buckets).
+### Threatened Species (IUCN Red List) in GBIF
 
-Example of “prompting” with `limit=0`: compare **record volumes by country** (Europe example; `country=...` filter):
+Many GBIF records include `iucnRedListCategory`. Common codes: LC, NT, VU, EN, CR, EW, EX, DD. Typical "threatened" set: **VU / EN / CR**.
 
-![GBIF record counts by European country (top 25)](pictures/gbif_europe_country_counts_top25.png)
+### Overlaying GBIF with OSM Industrial Assets
 
-### Threatened species (IUCN Red List) in GBIF records
+The notebook `oil_company_screening.ipynb` demonstrates querying OSM/Overpass for industrial features (storage tanks, power plants, etc.) and plotting them with GBIF occurrences on an interactive Folium map.
 
-Many GBIF occurrence records include an `iucnRedListCategory` field. This lets you quickly flag **threatened** taxa in your slice.
+### Licensing
 
-Common IUCN category codes:
-- **LC**: Least Concern
-- **NT**: Near Threatened
-- **VU**: Vulnerable
-- **EN**: Endangered
-- **CR**: Critically Endangered
-- **EW**: Extinct in the Wild
-- **EX**: Extinct
-- **DD**: Data Deficient
+GBIF data is commonly published under **Creative Commons** licenses. Licensing is often **record-level**; a single response can contain **mixed licenses**. Comply with the license on each record, or filter to a license subset. Common: CC BY-NC 4.0, CC BY 4.0, CC0 1.0.
 
-Typical “threatened” set used in quick analyses: **VU / EN / CR** (sometimes also EW / EX).
-
-Example from the Madrid (~30 km) slice in `gbif_eda.ipynb` (counts of records by `iucnRedListCategory`):
-- **LC**: 1434  
-- **MISSING**: 462  
-- **NT**: 53  
-- **EN**: 25  
-- **VU**: 25  
-- **DD**: 1  
-
-From that same slice, the notebook flagged **50 threatened records** across **6 unique threatened species**, e.g.:
-- `Oryctolagus cuniculus` (**EN**)
-- `Aquila adalberti` (**EN**)
-- `Macrochloa tenacissima` (**VU**)
-
-#### Example threatened species in Madrid area: European rabbit
-
-![Oryctolagus cuniculus (European rabbit)](pictures/oryctolagus_cuniculus_european_rabbit.png)
-
-`Oryctolagus cuniculus` (European rabbit) — **Near threatened**, population **decreasing**.  
-*(Status can vary by assessment scope/date; verify against the current IUCN assessment for your use case.)*
-
-> Note: “Threatened” (IUCN) is not the same as “protected” (legal protection). Legal protection depends on jurisdiction (CITES/EU/national lists) and requires joining an external list to GBIF (ideally via `speciesKey`).
-
-### Overlaying GBIF occurrences with industrial assets from OpenStreetMap (Overpass API)
-
-In addition to biodiversity occurrences (GBIF), you can enrich the analysis with **nearby industrial assets** from **OpenStreetMap** via the **Overpass API**—for example:
-- `man_made=storage_tank` (storage tanks)
-- `landuse=industrial`, `industrial=*`, `power=*`, and other site/plant infrastructure tags
-
-The notebook `oil_company_screening.ipynb` demonstrates a workflow where we:
-- query OSM/Overpass for industrial features in the same city/radius area,
-- extract their **coordinates** and basic metadata,
-- plot them together with GBIF occurrence points on an interactive `folium` map,
-- export the result to an HTML file you can open locally:
-  - `data/oil_screening_map_madrid_spain_r30km.html`
-
-Screenshot preview:
-
-![OSM industrial assets + GBIF occurrences (Madrid ~30 km)](pictures/oil_screening_map_madrid_spain_r30km_screenshot.png)
-
-### Land cover composition from OpenStreetMap (proxy)
-
-You can also use OpenStreetMap as a **land-cover proxy** by querying polygon features such as:
-- `landuse=*`
-- `natural=*`
-- `leisure=*`
-
-In `oil_company_screening.ipynb` we fetch these polygons via Overpass, map them into coarse classes (e.g., `urban`, `agriculture`, `forest`, …), and compute an **approximate % area** composition within the city-radius bounding box. This is useful for adding **habitat context** when interpreting GBIF occurrences and industrial-asset proximity.
-
-Example (Madrid ~30 km; OSM proxy):
-
-![Land cover composition (OSM proxy) — Madrid (~30 km)](pictures/landcover_composition_madrid_spain_r30km.png)
-
-### How GBIF data is “published”
-
-- **Publishers** (museums, research institutes, citizen science platforms, etc.) publish datasets to GBIF.
-- A dataset is identified by a **`datasetKey`** (UUID). A dataset usually has dataset-level metadata (title, publisher, DOI, etc.).
-- GBIF exposes occurrences via APIs (e.g. **Occurrence Search API**) and via download formats.
-
-### Licensing: record-level, mixed, and important
-
-GBIF occurrence data is commonly published under **Creative Commons** licenses. In practice:
-- **Licensing is often carried at the record level**, via fields like **`license`** and **`rightsHolder`**.
-- A single API response / download can contain records from **many datasets** (many `datasetKey`s) and therefore **mixed licenses**.
-- The safest rule: **comply with the license on each record you reuse**, or **filter** your analysis to a license subset that fits your use case.
-
-#### Common licenses you may see (examples)
-
-- **CC BY-NC 4.0** (`.../licenses/by-nc/4.0/...`)
-  - You can reuse and adapt the data **for non-commercial use only**.
-  - You must provide **attribution** and indicate changes.
-- **CC BY 4.0** (`.../licenses/by/4.0/...`)
-  - Similar, but **commercial use is allowed**.
-  - Attribution is still required.
-- **CC0 1.0** (`.../publicdomain/zero/1.0/...`)
-  - Public domain dedication: generally reusable without restrictions.
-
-> Note: License URLs sometimes end with `.../legalcode` (full legal text). The human-readable summary is often the same URL without `/legalcode` (the “deed” page).
-
-#### What “attribution” means (and what it does NOT mean)
-
-**Attribution** means giving credit — **not paying**. Typically you should include:
-- **Who**: rights holder / publisher (often `rightsHolder` and/or dataset publisher)
-- **What**: dataset title / identifier (e.g. `datasetKey`) and what you used (e.g. “GBIF occurrence records”)
-- **Source**: GBIF link and/or dataset DOI; optionally record-level `references` links
-- **License**: license name + link (e.g. “CC BY‑NC 4.0”)
-- **Changes**: note if you filtered/cleaned/aggregated the data
-
-Minimal attribution template (adjust to your context):
-> “Data: GBIF occurrence records for {area/time}. Licensed under {license}. Rights holders and source datasets as provided in the records (`rightsHolder`, `datasetKey`). Accessed via GBIF on {date}. Filtered/aggregated by the authors.”
+**Attribution** means giving credit — not paying. Include: rights holder, dataset title/identifier, GBIF link, license name, and note any filtering/aggregation.
 
 ---
 
-This document also contains a practical reference for working with GBIF data programmatically. It describes:
+## Query Interface: `pygbif.occurrences.search()` Parameters
 
-1. **Input parameters** available for querying GBIF occurrence data using `pygbif.occurrences.search()`
-2. **Output columns** commonly produced in GBIF’s **Simple download** formats (SIMPLE_CSV / SIMPLE_PARQUET), suitable for loading into pandas as a flat table.
+### Taxonomy Filters
 
-> Sources: `pygbif` occurrence module documentation and GBIF download format documentation.  
-> - `pygbif` Occurrence search docs: https://pygbif.readthedocs.io/en/latest/modules/occurrence.html  
-> - GBIF download formats: https://techdocs.gbif.org/en/data-use/download-formats
+- **`taxonKey`** — GBIF backbone taxon identifier (recommended for precise filtering)
+- **`kingdomKey`**, **`phylumKey`**, **`classKey`**, **`orderKey`**, **`familyKey`**, **`genusKey`**
+- **`scientificName`** — Scientific name search (includes synonyms)
 
----
+### Geography / Spatial Filters
 
-## 1) Query interface: `pygbif.occurrences.search()` parameters
+- **`country`** — ISO 3166-1 alpha-2 (e.g. `"ES"`, `"PT"`)
+- **`continent`** — africa, antarctica, asia, europe, north_america, oceania, south_america
+- **`geometry`** — WKT geometry (POINT, POLYGON, MULTIPOLYGON)
+- **`decimalLatitude`**, **`decimalLongitude`** — Range queries: `"40.0,41.0"`
+- **`hasCoordinate`** — Only records with coordinates
+- **`hasGeospatialIssue`** — Filter by geospatial issues
 
-`pygbif.occurrences.search()` is a wrapper around the GBIF **Occurrence Search API**. It supports filtering occurrences by taxonomy, geography, time, dataset metadata, record quality, and more, and returns a paged response (`limit` + `offset`).
+### Time Filters
 
-### 1.1 Taxonomy filters
+- **`eventDate`** — ISO 8601, supports ranges
+- **`year`**, **`month`** — Supports ranges
+- **`lastInterpreted`** — When GBIF last processed the record
 
-- **`taxonKey`** *(int)*  
-  GBIF backbone taxon identifier to search by (recommended for precise taxon filtering).
+### Other Filters
 
-- **`kingdomKey`** *(int)*  
-  Filter by kingdom classification key.
-
-- **`phylumKey`** *(int)*  
-  Filter by phylum classification key.
-
-- **`classKey`** *(int)*  
-  Filter by class classification key.
-
-- **`orderKey`** *(int)*  
-  Filter by order classification key.
-
-- **`familyKey`** *(int)*  
-  Filter by family classification key.
-
-- **`genusKey`** *(int)*  
-  Filter by genus classification key.
-
-- **`subgenusKey`** *(int)*  
-  Filter by subgenus classification key.
-
-- **`scientificName`** *(str)*  
-  Scientific name search using the GBIF backbone (includes matches to synonyms/included taxa).
+- **`datasetKey`**, **`publishingCountry`**
+- **`basisOfRecord`** — HUMAN_OBSERVATION, PRESERVED_SPECIMEN, etc.
+- **`establishmentMeans`** — NATIVE, INTRODUCED, INVASIVE, etc.
+- **`mediatype`** — StillImage, MovingImage, Sound
+- **`limit`**, **`offset`** — Paging
+- **`facet`** — Aggregations (e.g. `country`, `speciesKey`)
 
 ---
 
-### 1.2 Geography / spatial filters
+## Output Schema: GBIF Simple Download Columns
 
-- **`country`** *(str; ISO 3166-1 alpha-2)*  
-  Two-letter country code where the occurrence was recorded (e.g., `"ES"`, `"US"`).
+Key columns in SIMPLE_CSV / SIMPLE_PARQUET:
 
-- **`continent`** *(str)*  
-  One of: `africa`, `antarctica`, `asia`, `europe`, `north_america`, `oceania`, `south_america`.
-
-- **`geometry`** *(str; WKT)*  
-  Well-Known Text (WKT) geometry filter. Supports: `POINT`, `LINESTRING`, `LINEARRING`, `POLYGON`, `MULTIPOLYGON`.  
-  **Note:** For polygons, GBIF expects counter-clockwise point order.
-
-- **`decimalLatitude`** *(float or `"min,max"` str)*  
-  Latitude in WGS84. Supports **range queries** using `"min,max"` (e.g., `"40.0,41.0"`).
-
-- **`decimalLongitude`** *(float or `"min,max"` str)*  
-  Longitude in WGS84. Supports **range queries** using `"min,max"` (e.g., `"-4.0,-3.0"`).
-
-- **`hasCoordinate`** *(bool)*  
-  If `True`, return only records with coordinates.
-
-- **`hasGeospatialIssue`** *(bool)*  
-  If `True`, only records with known geospatial issues; if `False`, only records without them; if unset, both.
-
-- **`elevation`** *(int/str; supports ranges)*  
-  Elevation in meters. Supports `"min,max"` range queries (e.g., `"0,2000"`).
-
-- **`depth`** *(int/str; supports ranges)*  
-  Depth in meters. Supports `"min,max"` range queries (e.g., `"0,200"`).
+| Theme | Columns |
+|-------|---------|
+| **Identifiers** | gbifID, datasetKey, occurrenceID |
+| **Taxonomy** | kingdom, phylum, class, order, family, genus, species, scientificName, taxonRank |
+| **Place** | countryCode, stateProvince, locality |
+| **Coordinates** | decimalLatitude, decimalLongitude, coordinateUncertaintyInMeters |
+| **Dates** | eventDate, year, month, day |
+| **Keys** | taxonKey, speciesKey |
+| **Record** | basisOfRecord, institutionCode, collectionCode |
+| **Rights** | license, rightsHolder |
+| **Status** | establishmentMeans, individualCount |
 
 ---
 
-### 1.3 Time filters
+## Recommended Workflow
 
-- **`eventDate`** *(str; ISO 8601; supports ranges)*  
-  Date/time of the event (recording/observation). Supports partial dates and ranges like `"1990,1991"`.
-
-- **`year`** *(int or `"min,max"` str)*  
-  Four-digit year; supports ranges like `"1990,1999"`.
-
-- **`month`** *(int or `"min,max"` str)*  
-  Month `1..12`; supports ranges like `"1,3"`.
-
-- **`lastInterpreted`** *(str; ISO 8601; supports ranges)*  
-  When GBIF last processed/interpreted the record; supports ranges.
+- **Small pulls** (up to hundreds of thousands): `occurrences.search()` with pagination
+- **Large pulls** (millions): Use GBIF **download** API (server-side exports), then load SIMPLE_PARQUET
+- **Modeling:** Use `hasCoordinate=True`, consider `hasGeospatialIssue=False`, include `coordinateUncertaintyInMeters` in quality screening
+- **Licensing:** For commercial use, respect record-level licenses and attribution
 
 ---
 
-### 1.4 Dataset / publisher filters
-
-- **`datasetKey`** *(str; UUID)*  
-  Dataset UUID (publisher dataset).
-
-- **`publishingCountry`** *(str; ISO 3166-1 alpha-2)*  
-  Publishing country (two-letter code) of the dataset/record.
-
-- **`repatriated`** *(flag / bool-ish)*  
-  Filter records where publishing country differs from the country of recording.
-
----
-
-### 1.5 Record / collection metadata filters
-
-- **`basisOfRecord`** *(str)*  
-  Filter by record basis (e.g., `HUMAN_OBSERVATION`, `PRESERVED_SPECIMEN`, etc.).
-
-- **`typeStatus`** *(str)*  
-  Filter by type status (nomenclatural type information).
-
-- **`institutionCode`** *(str)*  
-  Filter by institution code/acronym.
-
-- **`collectionCode`** *(str)*  
-  Filter by collection code.
-
-- **`catalogNumber`** *(str)*  
-  Filter by collection/dataset catalog number.
-
-- **`recordNumber`** *(int/str)*  
-  Filter by the collector’s/observer’s record number.
-
----
-
-### 1.6 People / attribution filters
-
-- **`recordedBy`** *(str)*  
-  Filter by the recorder/collector name.
-
-- **`recordedByID`** *(str)*  
-  Filter by recorder identifier (e.g., ORCID URI).
-
-- **`identifiedByID`** *(str)*  
-  Filter by identifier/determiner identifier (e.g., ORCID URI).
-
----
-
-### 1.7 Quality / interpretation filters
-
-- **`issue`** *(str or list[str])*  
-  Filter by one or more GBIF issue codes (interpretation flags).
-
----
-
-### 1.8 Media + establishment filters
-
-- **`mediatype`** *(str)*  
-  Filter by media type: `StillImage`, `MovingImage`, `Sound`.
-
-- **`establishmentMeans`** *(str)*  
-  Filter by establishment means (e.g., `INTRODUCED`, `INVASIVE`, `NATIVE`, etc.).
-
----
-
-### 1.9 Free text search
-
-- **`q`** *(str)*  
-  A simple text query across indexed fields.
-
-- **`spellCheck`** *(bool)*  
-  If `True`, enables spellcheck suggestions for `q`.
-
----
-
-### 1.10 Paging + returned fields
-
-- **`limit`** *(int; default 300)*  
-  Page size (records per request).
-
-- **`offset`** *(int; default 0)*  
-  Pagination offset.
-
-- **`fields`** *(str or list[str])*  
-  Field selection:
-  - `"all"` (default): all fields available
-  - `"minimal"`: minimal set (name, key, latitude, longitude)
-  - list of specific fields (implementation-dependent; may vary by API evolution)
-
----
-
-### 1.11 Faceting (aggregations)
-
-Facets return summary counts by category, often used with `limit=0` to avoid downloading records.
-
-- **`facet`** *(str or list[str])*  
-  Facet fields (e.g., `country`, `basisOfRecord`, etc.)
-
-- **`facetMincount`** *(int)*  
-  Minimum count threshold to include a facet value.
-
-- **`facetMultiselect`** *(bool)*  
-  If `True`, returns counts for values not currently selected by filters.
-
----
-
-### 1.12 `**kwargs` passthrough
-
-- `pygbif` allows passing some **request-level options** (e.g., `timeout`) through `**kwargs`.  
-  Common options include: `timeout`, `cookies`, `auth`, `allow_redirects`, `proxies`, `verify`, `stream`, `cert`.
-
----
-
-## 2) Output schema: GBIF Simple download columns (flat table)
-
-GBIF provides different download formats. The most convenient for pandas is **Simple CSV** or **Simple Parquet** (flat schema).
-
-Below are commonly used columns included in these “simple” formats, grouped by theme.
-
-> Note: If you instead build a DataFrame directly from `occurrences.search(...)[ "results" ]`, you may see additional nested fields not listed here. Simple formats are designed to be stable and flat.
-
----
-
-### 2.1 Identifiers
-
-- **`gbifID`** *(string)*  
-  GBIF occurrence identifier (key), intended to be stable.
-
-- **`datasetKey`** *(string; UUID)*  
-  Dataset UUID containing the occurrence.
-
-- **`occurrenceID`** *(string)*  
-  Publisher-provided occurrence identifier (ideally globally unique).
-
----
-
-### 2.2 Backbone taxonomy (interpreted by GBIF)
-
-- **`kingdom`** *(string)* — Kingdom name (backbone-interpreted).  
-- **`phylum`** *(string)* — Phylum name (backbone-interpreted).  
-- **`class`** *(string)* — Class name (backbone-interpreted).  
-- **`order`** *(string)* — Order name (backbone-interpreted).  
-- **`family`** *(string)* — Family name (backbone-interpreted).  
-- **`genus`** *(string)* — Genus name (backbone-interpreted).  
-- **`species`** *(string)* — Species name (usually without authorship).  
-- **`infraspecificEpithet`** *(string)* — Infraspecific epithet (if present).  
-- **`taxonRank`** *(string)* — Rank of the most specific name used (e.g., SPECIES).  
-- **`scientificName`** *(string)* — Interpreted scientific name (often includes authorship).
-
----
-
-### 2.3 Verbatim taxonomy (publisher-provided)
-
-- **`verbatimScientificName`** *(string)*  
-  Scientific name exactly as provided by the publisher.
-
-- **`verbatimScientificNameAuthorship`** *(string)*  
-  Authorship exactly as provided (if present).
-
----
-
-### 2.4 Administrative / place description
-
-- **`countryCode`** *(string)*  
-  ISO 3166-1 alpha-2 country code.
-
-- **`stateProvince`** *(string)*  
-  Administrative region (publisher-provided).
-
-- **`locality`** *(string)*  
-  Free-text locality description (publisher-provided).
-
----
-
-### 2.5 Occurrence status / abundance
-
-- **`occurrenceStatus`** *(string)*  
-  Presence/absence-style status (controlled vocabulary).
-
-- **`individualCount`** *(integer)*  
-  Number of individuals for the record (if provided).
-
----
-
-### 2.6 Publishing organization
-
-- **`publishingOrgKey`** *(string; UUID)*  
-  Publisher organization UUID.
-
----
-
-### 2.7 Coordinates and coordinate quality
-
-- **`decimalLatitude`** *(float)*  
-  Latitude in WGS84.
-
-- **`decimalLongitude`** *(float)*  
-  Longitude in WGS84.
-
-- **`coordinateUncertaintyInMeters`** *(float)*  
-  Radius of uncertainty around coordinates.
-
-- **`coordinatePrecision`** *(float)*  
-  Coordinate precision (decimal representation).
-
----
-
-### 2.8 Elevation / depth (interpreted fields)
-
-- **`elevation`** *(float)*  
-  Interpreted elevation in meters above sea level.
-
-- **`elevationAccuracy`** *(float)*  
-  Estimated uncertainty/error for elevation.
-
-- **`depth`** *(float)*  
-  Interpreted depth in meters below sea level.
-
-- **`depthAccuracy`** *(float)*  
-  Estimated uncertainty/error for depth.
-
----
-
-### 2.9 Dates
-
-- **`eventDate`** *(string)*  
-  Event date/time as recorded/published (ISO 8601 style; can be partial).
-
-- **`year`** *(integer)*  
-  Extracted/recorded year.
-
-- **`month`** *(integer)*  
-  Extracted/recorded month.
-
-- **`day`** *(integer)*  
-  Extracted/recorded day.
-
----
-
-### 2.10 Taxon keys (numeric identifiers)
-
-- **`taxonKey`** *(integer)*  
-  Backbone taxon key for the interpreted matched taxon (can represent a synonym concept).
-
-- **`speciesKey`** *(integer)*  
-  Backbone taxon key for the species-level concept.
-
----
-
-### 2.11 Record type / collection metadata
-
-- **`basisOfRecord`** *(string)*  
-  Basis of record (GBIF vocabulary) such as `HUMAN_OBSERVATION`.
-
-- **`institutionCode`** *(string)*  
-  Institution code/acronym holding the record.
-
-- **`collectionCode`** *(string)*  
-  Collection code/acronym.
-
-- **`catalogNumber`** *(string)*  
-  Record number used within the dataset/collection.
-
-- **`recordNumber`** *(string)*  
-  Recorder/collector record number.
-
----
-
-### 2.12 Identification / people
-
-- **`identifiedBy`** *(string; often semicolon-separated list)*  
-  People or agents who identified the taxon.
-
-- **`dateIdentified`** *(string; ISO 8601 date)*  
-  Date of identification/determination.
-
-- **`recordedBy`** *(string; often semicolon-separated list)*  
-  Person(s) or organization(s) who recorded the occurrence.
-
----
-
-### 2.13 Rights / licensing
-
-- **`license`** *(string)*  
-  Usage license for the record (e.g., CC0, CC BY, CC BY-NC).
-
-- **`rightsHolder`** *(string)*  
-  Rights holder name (if provided).
-
----
-
-### 2.14 Biological status / type material
-
-- **`typeStatus`** *(structured / string)*  
-  Nomenclatural type status (if applicable).
-
-- **`establishmentMeans`** *(string / structured)*  
-  Establishment means (native/introduced/invasive/etc.) if present.
-
----
-
-### 2.15 Processing, issues, media
-
-- **`lastInterpreted`** *(string; ISO 8601 date-time)*  
-  Timestamp when GBIF last interpreted the record.
-
-- **`mediaType`** *(string; often semicolon-separated list)*  
-  Media types associated with the record (images, audio, etc.)
-
-- **`issue`** *(string; often semicolon-separated list)*  
-  GBIF interpretation issues flagged for the record (data quality flags).
-
----
-
-## 3) Recommended workflow notes (for data science / big data)
-
-- **For small pulls** (up to tens/hundreds of thousands of records):  
-  `occurrences.search()` with pagination (`limit` + `offset`) works well.
-
-- **For large pulls** (millions of records):  
-  Prefer the GBIF **download** mechanism (server-side exports), then load SIMPLE_PARQUET or Darwin Core Archive locally.
-
-- **For modeling**:  
-  Use `hasCoordinate=True`, consider filtering out records with geospatial issues (`hasGeospatialIssue=False`), and include `coordinateUncertaintyInMeters` in quality screening.
-
-- **Licensing**:  
-  If you plan commercial use, ensure you respect record-level licenses and attribution requirements (especially CC BY and CC BY-NC).
-
----
-
-## 4) Quick examples
-
-### 4.1 Bounding box query (via lat/lon ranges)
-
-```python
-from pygbif import occurrences
-
-resp = occurrences.search(
-    decimalLatitude="40.0,41.0",
-    decimalLongitude="-4.0,-3.0",
-    hasCoordinate=True,
-    limit=300,
-    offset=0
-)
+*Sources: [pygbif docs](https://pygbif.readthedocs.io/), [GBIF download formats](https://techdocs.gbif.org/en/data-use/download-formats)*
