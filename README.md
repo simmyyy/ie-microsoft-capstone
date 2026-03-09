@@ -1,8 +1,10 @@
-# HEXECO — Biodiversity Intelligence Platform
+<p align="center">
+  <img src="pictures/hexeco.png" alt="HEXECO - Environmental Risk Intelligence Platform" width="400">
+</p>
 
-![HEXECO - Environmental Risk Intelligence Platform](pictures/hexeco.png)
+<h1 align="center">HEXECO — Biodiversity Intelligence Platform</h1>
 
-> **A production-grade biodiversity data platform** that ingests GBIF occurrence data, enriches it with environmental and geospatial features, trains machine learning models for species prediction and invasive species classification, and delivers an interactive H3-based Biodiversity Explorer for Spain and Portugal.
+<p align="center"><em>A production-grade biodiversity data platform</em> that ingests GBIF occurrence data, enriches it with environmental and geospatial features, trains machine learning models for species prediction and invasive species classification, and delivers an interactive H3-based Biodiversity Explorer for Spain and Portugal.</p>
 
 ---
 
@@ -33,7 +35,9 @@ This capstone project delivers an **end-to-end biodiversity intelligence system*
 
 **Geographic focus:** Spain and Portugal (Iberian Peninsula), with invasive species image classifier focused on the Galicia coast.
 
-![Does it live in Spain](pictures/does_it_live_in_spain.png)
+<p align="center">
+  <img src="pictures/who_did_this.png" alt="Who did this" width="600">
+</p>
 
 **Use cases:** Conservation planning, Area of Habitat (AoH) mapping, invasive species early detection, TNFD-style biodiversity screening, species richness and threat hotspot analysis.
 
@@ -41,11 +45,11 @@ This capstone project delivers an **end-to-end biodiversity intelligence system*
 
 ## Proposed Technical Architecture
 
-![Who did this](pictures/who_did_this.png)
-
 The system follows a **lakehouse** design: raw data flows through Bronze, Silver, and Gold layers, with H3 as the unifying spatial index. Processed data feeds ML models and the Streamlit app.
 
-![Proposed Technical Architecture](proposed_tech_architecture.png)
+<p align="center">
+  <img src="proposed_tech_architecture.png" alt="Proposed Technical Architecture" width="700">
+</p>
 
 ### Architecture Overview
 
@@ -106,6 +110,10 @@ IUCN API                →  Silver  →  Gold (iucn_species_profiles)
 ---
 
 ## Directory Structure
+
+<p align="center">
+  <img src="pictures/does_it_live_in_spain.png" alt="Does it live in Spain" width="600">
+</p>
 
 ```
 ie-microsoft-capstone/
@@ -239,7 +247,9 @@ WHERE g.country = 'ES' AND g.year = 2024 AND g.h3_resolution = 7;
 
 ### Species Distribution Prediction
 
-![Our favourite species — Lanius meridionalis (Southern Grey Shrike)](pictures/our_favourite_specie.png)
+<p align="center">
+  <img src="pictures/our_favourite_specie.png" alt="Our favourite species — Lanius meridionalis (Southern Grey Shrike)" width="500">
+</p>
 
 - **Target:** Top 10 threatened species (IUCN CR/EN/VU) + Lanius meridionalis (Southern Grey Shrike)
 - **Features:** 40 environmental features (OSM, GEE terrain/land cover, Natura 2000)
