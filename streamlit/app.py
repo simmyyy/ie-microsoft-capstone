@@ -14,9 +14,11 @@ Run:
 
 from __future__ import annotations
 
+import base64
 import json
 import warnings
 from typing import Any
+from pathlib import Path
 
 from ui.styles_v2 import inject_css
 from ui.components import header
@@ -1002,6 +1004,183 @@ def format_metric(value: Any) -> str:
         return f"{value:,}"
     return str(value)
 
+def render_app_navbar():
+    ss = st.session_state
+
+    # Logo
+    logo_path = Path(__file__).parent / "ui" / "assets" / "logo_white.png"
+    if not logo_path.exists():
+        logo_path = Path(__file__).parent / "ui" / "assets" / "logo_mini.png"
+
+    logo_b64 = ""
+    if logo_path.exists():
+        logo_b64 = base64.b64encode(logo_path.read_bytes()).decode("utf-8")
+
+    NAV_H = 76  # px, ajusta si cambias padding/tamaño de logo
+
+    st.markdown(
+        f"""
+        <style>
+        :root{{
+          --stroke: rgba(255,255,255,0.12);
+          --text: rgba(255,255,255,0.92);
+          --muted: rgba(255,255,255,0.72);
+          --card: rgba(255,255,255,0.06);
+          --accent1: rgba(223, 135, 79, 0.75);
+          --accent2: rgba(159, 196, 53, 0.65);
+        }}
+
+        header[data-testid="stHeader"] {{ display: none; }}
+
+        /* Full-width page so navbar reaches edges */
+        .block-container {{
+          max-width: 100% !important;
+          padding-left: 0 !important;
+          padding-right: 0 !important;
+          padding-top: 0 !important;
+        }}
+
+        /* Sticky/fixed glass navbar */
+        .topnav {{
+          position: fixed;
+          top: 0; left: 0; right: 0;
+          z-index: 1000000;
+          height: 120px;
+
+          padding: 20px 22px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+
+          background: rgba(8, 12, 20, 0.55);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+
+          border-bottom: 1px solid rgba(255,255,255,0.10);
+          border-radius: 0 !important;
+          margin: 0 !important;
+        }}
+
+        .brand {{
+          display:flex;
+          align-items:center;
+          gap: 12px;
+          color: var(--text);
+          font-weight: 800;
+          letter-spacing: -0.02em;
+          font-size: 17px;
+          padding-left: 18px;
+          min-width: 0;
+        }}
+
+        .brand-logo {{
+          height: 80px;
+          width: auto;
+          display:block;
+        }}
+
+        .navlinks {{
+          display:flex;
+          gap: 18px;
+          align-items:center;
+          color: var(--muted);
+          font-size: 14px;
+        }}
+
+        .navlinks a {{
+          color: var(--muted);
+          text-decoration: none;
+          font-size: 16px;
+          padding: 4px 4px;
+          border-radius: 10px;
+        }}
+        .navlinks a:hover {{
+          background: rgba(255,255,255,0.06);
+          color: var(--text);
+        }}
+
+        .nav-actions {{
+          display:flex;
+          gap: 10px;
+          align-items:center;
+          padding-right: 18px;
+        }}
+
+        /* Make Streamlit buttons look like landing pills */
+        .nav-actions .stButton>button {{
+          padding: 9px 14px !important;
+          border-radius: 999px !important;
+          font-size: 18px !important;
+          line-height: 1 !important;
+          font-weight: 650 !important;
+          border: 1px solid var(--stroke) !important;
+          background: var(--card) !important;
+          color: var(--text) !important;
+          width: auto !important;
+        }}
+        .nav-actions .home-btn .stButton>button {{
+          border: none !important;
+          background: linear-gradient(90deg, var(--accent1), var(--accent2)) !important;
+          color: rgba(6,18,26,0.95) !important;
+          font-weight: 850 !important;
+        }}
+        .btn {{
+            padding: 9px 14px; border-radius: 999px;
+            border: 1px solid var(--stroke);
+            background: var(--card);
+            color: var(--text);
+            font-weight: 650;
+            font-size: 18px;
+        }}
+        .btn-primary {{
+            border: none;
+            background: linear-gradient(90deg, var(--accent1), var(--accent2));
+        }}
+
+        /* Spacer so content starts below fixed navbar */
+        .nav-spacer {{
+          height: {NAV_H}px;
+        }}
+
+        /* Optional: subtle top fade line like premium apps */
+        .nav-glow {{
+          position: fixed;
+          top: {NAV_H}px; left: 0; right: 0;
+          height: 16px;
+          pointer-events: none;
+          background: linear-gradient(to bottom, rgba(0,0,0,0.22), rgba(0,0,0,0));
+          z-index: 9999;
+        }}
+        </style>
+
+        <div class="topnav">
+          <div class="brand">
+            <img class="brand-logo" src="data:image/png;base64,{logo_b64}" />
+            <span>GBIF Biodiversity Explorer</span>
+          </div>
+
+          <div class="navlinks">
+            <a href="#services">Services</a>
+            <a href="#data">Data</a>
+            <a href="#resources">Resources</a>
+            <a href="#about">About</a>
+          </div>
+
+          <div class="nav-actions">
+            <div class="btn">Login</div>
+            <div class="btn btn-primary">Home</div>
+          </div>
+        </div>
+        <div class="nav-glow"></div>
+        <div class="nav-spacer"></div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Real buttons (so Home works)
+    # We place them immediately after; CSS makes them look like they are in the bar.
+    c1, c2, c3 = st.columns([0.76, 0.12, 0.12])
+
 
 def render_sidebar() -> tuple[bool, int, str, int, int]:
     st.sidebar.markdown("### 🌿 Biodiversity Explorer")
@@ -1076,32 +1255,153 @@ def render_chat_panel(_h3_res: int, _chosen_hexes: set[str]) -> None:
             ss["chat_messages"].append({"role": "assistant", "content": response})
 
 
-def render_chosen_hexes(chosen_hexes: set[str], h3_res: int) -> None:
-    """Render 'Chosen hexes' bar at top with max 6 slots."""
-    st.markdown("### 📍 Chosen hexes")
-    hex_list = sorted(chosen_hexes)
+def render_chosen_card(chosen_hexes: set[str], h3_res: int) -> None:
+    import streamlit as st
+    from html import escape
+
+    ss = st.session_state
+    hex_list = sorted(list(chosen_hexes))
     n = len(hex_list)
-    cols = st.columns(MAX_CHOSEN_HEXES + 1)
-    for i, col in enumerate(cols[:MAX_CHOSEN_HEXES]):
-        with col:
-            if i < n:
-                h = hex_list[i]
-                st.caption(f"**{i + 1}.** `{h}`")
-            else:
-                st.caption(f"**{i + 1}.** —")
-    with cols[MAX_CHOSEN_HEXES]:
-        if st.button("Clear all", use_container_width=True, disabled=(n == 0)):
-            st.session_state["chosen_hexes"] = set()
-            st.session_state["last_processed_click"] = None
-            st.rerun()
-    if n < MAX_CHOSEN_HEXES:
-        st.caption(
-            f"Click hexes on the map to add (max {MAX_CHOSEN_HEXES}). Use Clear all to remove."
+    MAX_SLOTS = MAX_CHOSEN_HEXES  # usa tu constante (6)
+
+    st.markdown(
+        """
+        <style>
+        /* Estiliza el bloque que CONTIENE el anchor */
+        div[data-testid="stVerticalBlock"]:has(#chosen-card-anchor) {
+          padding: 16px 18px !important;
+          border-radius: 38px !important;
+          background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)) !important;
+          border: 1px solid rgba(255,255,255,0.07) !important;
+          box-shadow: 0 10px 32px rgba(0,0,0,0.45) !important;
+          backdrop-filter: blur(8px) !important;
+          -webkit-backdrop-filter: blur(8px) !important;
+          margin-bottom: 16px !important;
+        }
+
+        #chosen-card-anchor { display:none; }
+
+        .chosen-h-title{
+          font-size: 22px; font-weight: 850; color: rgba(255,255,255,0.94);
+          margin: 0 0 2px 0;
+        }
+        .chosen-h-desc{
+          font-size: 16px; color: rgba(255,255,255,0.68);
+          margin: 0 0 10px 0;
+        }
+
+        .chips { display:flex; gap:10px; flex-wrap:wrap; margin-top: 10px; }
+        .chip{
+          display:inline-flex; gap:8px; align-items:center;
+          padding: 8px 10px; border-radius: 999px;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.07);
+          color: rgba(255,255,255,0.92);
+          font-size: 12px;
+        }
+        .chip .idx{
+          width: 20px; height: 20px; border-radius: 999px;
+          display:inline-flex; align-items:center; justify-content:center;
+          background: linear-gradient(90deg, rgba(223,135,79,0.85), rgba(159,196,53,0.75));
+          color: rgba(6,18,26,0.95);
+          font-weight: 900; font-size: 12px;
+          flex: 0 0 auto;
+        }
+        .chip code{
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+          font-size: 11px; background: transparent; padding: 0;
+          color: rgba(255,255,255,0.92);
+        }
+
+        .chosen-meta{
+          margin-top: 10px;
+          font-size: 13px;
+          color: rgba(255,255,255,0.66);
+        }
+
+        /* Botones dentro de la tarjeta */
+        div[data-testid="stVerticalBlock"]:has(#chosen-card-anchor) .stButton>button{
+          border-radius: 999px !important;
+          padding: 10px 14px !important;
+          border: 1px solid rgba(255,255,255,0.12) !important;
+          background: rgba(255,255,255,0.05) !important;
+          color: rgba(255,255,255,0.92) !important;
+          font-weight: 800 !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(#chosen-card-anchor) .stButton>button[kind="primary"]{
+          border: none !important;
+          background: linear-gradient(90deg, rgba(223,135,79,0.85), rgba(159,196,53,0.75)) !important;
+          color: rgba(6,18,26,0.95) !important;
+          font-weight: 950 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.container():
+        # anchor invisible: el CSS “agarra” este bloque completo
+        st.markdown('<div id="chosen-card-anchor"></div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="chosen-h-title">Selected hexes</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="chosen-h-desc">Select up to 6 hexagons on the map to generate analysis, reports, and quick inspections.</div>',
+            unsafe_allow_html=True,
         )
-    else:
-        st.success(f"✓ {MAX_CHOSEN_HEXES} hexes selected.")
 
+        chips_html = '<div class="chips">'
+        for i in range(MAX_SLOTS):
+            if i < n:
+                hx = escape(hex_list[i])
+                chips_html += f'<div class="chip"><div class="idx">{i+1}</div><code>{hx}</code></div>'
+            else:
+                chips_html += f'<div class="chip" style="opacity:0.45"><div class="idx">{i+1}</div><code>—</code></div>'
+        chips_html += "</div>"
+        st.markdown(chips_html, unsafe_allow_html=True)
 
+        st.markdown(
+            f'<div class="chosen-meta">Selected: <b>{n}</b> / {MAX_SLOTS} · H3 res <b>{h3_res}</b></div>',
+            unsafe_allow_html=True,
+        )
+
+        b1, b2 = st.columns([1, 1], gap="medium")
+        with b1:
+            if st.button("Clear all", key="chosen_clear_all", use_container_width=True, disabled=(n == 0)):
+                ss["chosen_hexes"] = set()
+                ss["last_processed_click"] = None
+                ss["selected_cell"] = None
+                st.rerun()
+        with b2:
+            if st.button(
+                "Generate report",
+                key="chosen_generate_report",
+                type="primary",
+                use_container_width=True,
+                disabled=(n == 0),
+            ):
+                # 1) Elegimos qué hex reportear (prioridad: selected_cell si existe)
+                report_hex = None
+                sel = ss.get("selected_cell")
+                if sel is not None:
+                    try:
+                        report_hex = sel.get("h3_index") if isinstance(sel, dict) else sel.get("h3_index")
+                    except Exception:
+                        report_hex = None
+
+                # fallback: el primero de los elegidos
+                report_hex = report_hex or (hex_list[0] if hex_list else None)
+
+                # 2) Seteamos el selectbox del tab OSM para que use ese hex
+                if report_hex:
+                    ss["report_hex_select"] = report_hex
+
+                # 3) Disparamos el trigger que ejecutará la MISMA lógica del tab OSM
+                ss["trigger_generate_report"] = True
+                st.rerun()
+
+    
+
+                
 def render_analysis_tab(
     chosen_hexes: set[str],
     h3_res: int,
@@ -1699,7 +1999,13 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
         else hex_list[0]
     )
 
-    if st.button("Generate report", type="primary", key="generate_report_btn"):
+    clicked = st.button("Generate report", type="primary", key="generate_report_btn")
+    triggered = st.session_state.get("trigger_generate_report", False)
+
+    if clicked or triggered:
+        # importantísimo: apagar el trigger para que no regenere en cada rerun
+        st.session_state["trigger_generate_report"] = False
+
         with st.spinner("Generating PDF…"):
             try:
                 from report_generator import generate_report
@@ -1901,12 +2207,14 @@ def render_main(
     Below: Top-10 table + summary stats.
     Returns the raw st_folium output dict.
     """
+    ss = st.session_state
+
     col_map, col_stats = st.columns([3, 1], gap="medium")
 
     # ── Right column: cell stats ───────────────────────────────────────────────
     with col_stats:
         render_cell_panel(
-            st.session_state.get("selected_cell"),
+            ss.get("selected_cell"),
             df_full,
         )
 
@@ -1934,16 +2242,8 @@ def render_main(
             )
         st.caption(" · ".join(status_parts))
 
-        # ── STABLE map key – only resets when year changes ────────────────────
-        # Crucially, h3_res is NOT in the key.  That means switching resolution
-        # reuses the same Leaflet component instance → map zoom & pan are
-        # preserved.  New hexagon data is passed as props and the layer updates
-        # in-place without unmounting.
-        #
-        # returned_objects strategy:
-        #   "top_n" / "viewport_snapshot" → only last_clicked  (no zoom reruns)
-        #   "request_bounds"              → last_clicked + bounds  (one shot)
-        view_mode = st.session_state.get("view_mode", "top_n")
+        # Returned objects strategy
+        view_mode = ss.get("view_mode", "top_n")
         if view_mode == "request_bounds":
             returned_objs = ["last_clicked", "bounds"]
         else:
@@ -1958,16 +2258,13 @@ def render_main(
             returned_objects=returned_objs,
         )
 
-        # ── Capture bounds on the "request_bounds" cycle ──────────────────────
-        # This runs immediately after the component reports back with bounds.
-        # We snapshot them, switch to viewport_snapshot mode, and stop
-        # requesting bounds (no more zoom-triggered reruns).
+        # Capture bounds for viewport_snapshot
         if view_mode == "request_bounds" and map_data and map_data.get("bounds"):
-            st.session_state["snapshot_bounds"] = map_data["bounds"]
-            st.session_state["view_mode"] = "viewport_snapshot"
+            ss["snapshot_bounds"] = map_data["bounds"]
+            ss["view_mode"] = "viewport_snapshot"
             st.rerun()
 
-        # ── Buttons ───────────────────────────────────────────────────────────
+        # Buttons
         if show_overlay:
             in_vp = view_mode == "viewport_snapshot"
             btn_col1, btn_col2 = st.columns([1, 1])
@@ -1981,8 +2278,7 @@ def render_main(
                         "H3 cells visible in that area."
                     ),
                 ):
-                    # Transition: request one bounds snapshot on the next render
-                    st.session_state["view_mode"] = "request_bounds"
+                    ss["view_mode"] = "request_bounds"
                     st.rerun()
             with btn_col2:
                 if st.button(
@@ -1991,9 +2287,29 @@ def render_main(
                     disabled=not in_vp,
                     help="Back to showing the top-N cells by metric.",
                 ):
-                    st.session_state["view_mode"] = "top_n"
-                    st.session_state["snapshot_bounds"] = None
+                    ss["view_mode"] = "top_n"
+                    ss["snapshot_bounds"] = None
                     st.rerun()
+
+        # ✅ IMPORTANT: Click handler MUST live right after st_folium (tabs-safe)
+        if map_data and map_data.get("last_clicked"):
+            click = map_data["last_clicked"]
+            lat, lon = float(click["lat"]), float(click["lng"])
+            click_key = (round(lat, 6), round(lon, 6))
+
+            if ss.get("last_processed_click") != click_key:
+                ss["last_processed_click"] = click_key
+
+                h3_idx = resolve_click_to_cell(lat, lon, h3_res)
+                cell_row = lookup_cell(df_full, h3_idx)
+
+                chosen = set(ss.get("chosen_hexes", set()))
+                if len(chosen) < MAX_CHOSEN_HEXES and h3_idx not in chosen:
+                    chosen.add(h3_idx)
+                ss["chosen_hexes"] = chosen  # reasignación (no in-place)
+
+                ss["selected_cell"] = cell_row
+                st.rerun()
 
     # ── Below: Top 10 + summary ───────────────────────────────────────────────
     if not df_full.empty:
@@ -2047,28 +2363,29 @@ def render_main(
 
 
 def main() -> None:
+    favicon_path = Path(__file__).parent / "ui" / "assets" / "logo_mini.png"
     st.set_page_config(
         page_title="GBIF Biodiversity Explorer",
-        page_icon="🌿",
+        page_icon=str(favicon_path),
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
 
-    #=========ESTILO CSS=========
+    ss = st.session_state
+    ss.setdefault("route", "landing")  # landing | app
+
+    # ✅ LANDING primero, SIN inject_css()
+    if ENABLE_LANDING and ss["route"] == "landing":
+        from ui.landing import render_landing
+        render_landing()
+        return
+
+    # ✅ ya en la app normal, sí metemos CSS global
     inject_css()
-    status = f"""
-    <div class='label'>Environment</div>
-    <div style='font-weight:700;'>ES • {DEMO_YEAR} • H3 res {st.session_state.get("prev_h3_res") or DEMO_H3_OPTIONS[0]}</div>
-    <div class='muted'>AWS_PROFILE: <code>{AWS_PROFILE or "default"}</code> • DuckDB: {"ON" if _DUCKDB_AVAILABLE else "fallback"}</div>
-    """
-    header(
-        "GBIF Biodiversity Explorer",
-        "Premium biodiversity screening using GBIF (Gold) + H3 + IUCN + Natura 2000 + OSM + AI insights.",
-        right_html=status
-    )
 
     # ── Session state defaults ────────────────────────────────────────────────
     ss = st.session_state
+    ss.setdefault("trigger_generate_report", False)
     ss.setdefault("selected_cell", None)
     ss.setdefault("chosen_hexes", set())  # set of h3_index, max 6
     ss.setdefault(
@@ -2115,8 +2432,9 @@ def main() -> None:
 
     folium_map = make_map(geojson, show_overlay, color_metric)
 
-    # ── Chosen hexes bar + tabs ───────────────────────────────────────────────
-    render_chosen_hexes(ss["chosen_hexes"], h3_res)
+    # ── Top bar + chosen hexes ────────────────────────────────────────────────
+    render_app_navbar()
+    render_chosen_card(ss["chosen_hexes"], h3_res)
 
     if chat_open:
         main_col, chat_col = st.columns([3, 1], gap="medium")
@@ -2154,25 +2472,8 @@ def main() -> None:
         with chat_col:
             render_chat_panel(h3_res, ss["chosen_hexes"])
 
-    # ── Click handler: add hex to list + update selected_cell ───────────────────
-    # Only process NEW clicks to avoid infinite rerun loop (last_clicked persists)
-    if map_data and map_data.get("last_clicked"):
-        click = map_data["last_clicked"]
-        lat, lon = float(click["lat"]), float(click["lng"])
-        click_key = (round(lat, 6), round(lon, 6))
+    
 
-        if ss["last_processed_click"] != click_key:
-            ss["last_processed_click"] = click_key
-            h3_idx = resolve_click_to_cell(lat, lon, h3_res)
-            cell_row = lookup_cell(df_full, h3_idx)
-
-            # Add hex to chosen (max 6, no toggle – use Clear all to remove)
-            chosen = ss["chosen_hexes"]
-            if len(chosen) < MAX_CHOSEN_HEXES and h3_idx not in chosen:
-                chosen.add(h3_idx)
-
-            ss["selected_cell"] = cell_row
-            st.rerun()
 
 
 if __name__ == "__main__":
