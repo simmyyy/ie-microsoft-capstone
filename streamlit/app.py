@@ -1294,12 +1294,11 @@ def render_chosen_card(chosen_hexes: set[str], h3_res: int) -> None:
     ss = st.session_state
     hex_list = sorted(list(chosen_hexes))
     n = len(hex_list)
-    MAX_SLOTS = MAX_CHOSEN_HEXES  # usa tu constante (6)
+    MAX_SLOTS = MAX_CHOSEN_HEXES
 
     st.markdown(
         """
         <style>
-        /* Estiliza el bloque que CONTIENE el anchor */
         div[data-testid="stVerticalBlock"]:has(#chosen-card-anchor) {
           padding: 16px 18px !important;
           border-radius: 38px !important;
@@ -1351,7 +1350,6 @@ def render_chosen_card(chosen_hexes: set[str], h3_res: int) -> None:
           color: rgba(255,255,255,0.66);
         }
 
-        /* Botones dentro de la tarjeta */
         div[data-testid="stVerticalBlock"]:has(#chosen-card-anchor) .stButton>button{
           border-radius: 999px !important;
           padding: 10px 14px !important;
@@ -1372,7 +1370,6 @@ def render_chosen_card(chosen_hexes: set[str], h3_res: int) -> None:
     )
 
     with st.container():
-        # anchor invisible: el CSS “agarra” este bloque completo
         st.markdown('<div id="chosen-card-anchor"></div>', unsafe_allow_html=True)
 
         st.markdown('<div class="chosen-h-title">Selected hexes</div>', unsafe_allow_html=True)
@@ -1402,7 +1399,10 @@ def render_chosen_card(chosen_hexes: set[str], h3_res: int) -> None:
                 ss["chosen_hexes"] = set()
                 ss["last_processed_click"] = None
                 ss["selected_cell"] = None
+                ss["pending_report_hex"] = None
+                ss["trigger_generate_report"] = False
                 st.rerun()
+
         with b2:
             if st.button(
                 "Generate report",
@@ -1411,8 +1411,8 @@ def render_chosen_card(chosen_hexes: set[str], h3_res: int) -> None:
                 use_container_width=True,
                 disabled=(n == 0),
             ):
-                # 1) Elegimos qué hex reportear (prioridad: selected_cell si existe)
                 report_hex = None
+
                 sel = ss.get("selected_cell")
                 if sel is not None:
                     try:
@@ -1420,16 +1420,29 @@ def render_chosen_card(chosen_hexes: set[str], h3_res: int) -> None:
                     except Exception:
                         report_hex = None
 
-                # fallback: el primero de los elegidos
                 report_hex = report_hex or (hex_list[0] if hex_list else None)
 
-                # 2) Seteamos el selectbox del tab OSM para que use ese hex
                 if report_hex:
-                    ss["report_hex_select"] = report_hex
+                    ss["pending_report_hex"] = report_hex
+                    ss["trigger_generate_report"] = True
+                    ss["report_status"] = f"Generating report for {report_hex}..."
 
-                # 3) Disparamos el trigger que ejecutará la MISMA lógica del tab OSM
-                ss["trigger_generate_report"] = True
                 st.rerun()
+
+        # Global visible status / download
+        if ss.get("report_status"):
+            st.info(ss["report_status"])
+
+        if ss.get("report_pdf") and ss.get("report_hex"):
+            st.success(f"Report ready for {ss['report_hex']}")
+            st.download_button(
+                "📥 Download PDF",
+                data=ss["report_pdf"],
+                file_name=f"biodiversity_report_{ss['report_hex']}.pdf",
+                mime="application/pdf",
+                key="download_report_btn_global",
+                use_container_width=True,
+            )
 
     
 
@@ -2012,6 +2025,9 @@ def _fmt_osm_val(val: Any, fmt: str) -> str:
 
 def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> None:
     """Render OSM infrastructure report for selected hexes."""
+    import io
+    import traceback
+
     if len(chosen_hexes) < 1:
         st.info(
             "Select 1–6 hexes on the **Map** tab to see the OSM infrastructure report. "
@@ -2019,6 +2035,7 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
         )
         return
 
+    ss = st.session_state
     st.caption("Switch back to **Map** tab to change selection.")
     hex_list = sorted(chosen_hexes)
 
@@ -2034,7 +2051,6 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
 
     st.subheader("🏗️ OSM Infrastructure Report")
 
-    # Summary table: hexes as rows, key metrics as columns
     display_cols = ["h3_index"]
     for col, label, _ in OSM_REPORT_METRICS:
         if col in osm_df.columns:
@@ -2043,7 +2059,6 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
     report_df = osm_df[display_cols].copy()
     report_df = report_df.set_index("h3_index")
 
-    # Format for display
     fmt_map = {
         col: fmt for col, _, fmt in OSM_REPORT_METRICS if col in report_df.columns
     }
@@ -2053,7 +2068,6 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
 
     st.dataframe(report_df.T, use_container_width=True, hide_index=False)
 
-    # Per-hex expanders with area breakdown
     st.divider()
     st.markdown("**Per-hex details**")
     for h3_idx in hex_list:
@@ -2139,7 +2153,6 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                             f"{col.replace('_', ' ').title()}: {_fmt_osm_val(val, fmt)}"
                         )
 
-    # ── Generate report button ───────────────────────────────────────────────
     st.divider()
     st.subheader("📄 Generate report")
     st.caption(
@@ -2156,29 +2169,47 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
         or None
     )
 
-    report_hex = (
-        st.selectbox(
+    pending_report_hex = ss.get("pending_report_hex")
+    default_report_hex = pending_report_hex if pending_report_hex in hex_list else hex_list[0]
+    default_index = hex_list.index(default_report_hex)
+
+    # OJO: usamos index, no escribimos en session_state después
+    if len(hex_list) > 1:
+        report_hex = st.selectbox(
             "Select hex for report",
             options=hex_list,
+            index=default_index,
             format_func=lambda x: x,
             key="report_hex_select",
         )
-        if len(hex_list) > 1
-        else hex_list[0]
-    )
+    else:
+        report_hex = hex_list[0]
+        st.selectbox(
+            "Select hex for report",
+            options=hex_list,
+            index=0,
+            format_func=lambda x: x,
+            key="report_hex_select",
+            disabled=True,
+        )
 
     clicked = st.button("Generate report", type="primary", key="generate_report_btn")
-    triggered = st.session_state.get("trigger_generate_report", False)
+    triggered = ss.get("trigger_generate_report", False)
+
+    pending_report_hex = ss.get("pending_report_hex")
+    if pending_report_hex and pending_report_hex in hex_list:
+        report_hex = pending_report_hex
 
     if clicked or triggered:
-        # importantísimo: apagar el trigger para que no regenere en cada rerun
-        st.session_state["trigger_generate_report"] = False
+        ss["trigger_generate_report"] = False
+        ss["report_status"] = f"Generating report for {report_hex}..."
 
         with st.spinner("Generating PDF…"):
             try:
+                import io
+                import traceback
                 from report_generator import generate_report
 
-                # Fetch AI insights from Bedrock agent
                 ai_insights = None
                 try:
                     with st.spinner("Fetching AI insights…"):
@@ -2208,9 +2239,7 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
 
                 if not species_dim.empty and "taxon_key" in species_dim.columns:
                     h3_df = h3_df.merge(
-                        species_dim[["taxon_key", "species_name"]].drop_duplicates(
-                            "taxon_key"
-                        ),
+                        species_dim[["taxon_key", "species_name"]].drop_duplicates("taxon_key"),
                         on="taxon_key",
                         how="left",
                     )
@@ -2239,9 +2268,7 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                     h3_df["iucn_category"] = None
 
                 osm_row = osm_df[osm_df["h3_index"] == report_hex]
-                osm_row = (
-                    osm_row.iloc[0] if not osm_row.empty else pd.Series(dtype=object)
-                )
+                osm_row = osm_row.iloc[0] if not osm_row.empty else pd.Series(dtype=object)
 
                 gee_terrain_df = load_gee_terrain(h3_res)
                 gee_terrain_row = None
@@ -2260,7 +2287,6 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                 except Exception:
                     pass
 
-                # Temporal analysis (In-Time) for section 5
                 temporal_artifacts = None
                 try:
                     from temporal_analysis import (
@@ -2270,9 +2296,7 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                     )
 
                     hex_metrics = load_multiyear_metrics_hex(h3_res, report_hex)
-                    hex_species = load_multiyear_species_h3_mapping_hex(
-                        h3_res, report_hex
-                    )
+                    hex_species = load_multiyear_species_h3_mapping_hex(h3_res, report_hex)
                     species_dim_by_year = {}
                     for y in AVAILABLE_YEARS:
                         try:
@@ -2281,6 +2305,7 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                                 species_dim_by_year[y] = sd
                         except Exception:
                             pass
+
                     data = compute_temporal_analysis(
                         hex_metrics,
                         hex_species,
@@ -2296,7 +2321,7 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                             "limitations": data.get("limitations", ""),
                         }
                 except Exception:
-                    temporal_artifacts = None  # Skip section if analysis fails
+                    temporal_artifacts = None
 
                 pdf_bytes = generate_report(
                     h3_index=report_hex,
@@ -2311,19 +2336,30 @@ def render_osm_report_tab(chosen_hexes: set[str], h3_res: int, year: int) -> Non
                     gee_terrain_row=gee_terrain_row,
                     industry=industry,
                 )
-                st.session_state["report_pdf"] = pdf_bytes
-                st.session_state["report_hex"] = report_hex
-                st.success("Report generated. Download below.")
-            except Exception as e:
-                st.error(f"Failed to generate report: {e}")
 
-    if (
-        "report_pdf" in st.session_state
-        and st.session_state.get("report_hex") == report_hex
-    ):
+                if isinstance(pdf_bytes, io.BytesIO):
+                    pdf_bytes = pdf_bytes.getvalue()
+
+                if not isinstance(pdf_bytes, (bytes, bytearray)):
+                    raise RuntimeError(
+                        f"generate_report returned {type(pdf_bytes)} instead of bytes"
+                    )
+
+                ss["report_pdf"] = pdf_bytes
+                ss["report_hex"] = report_hex
+                ss["pending_report_hex"] = None
+                ss["report_status"] = f"Report ready for {report_hex}"
+                st.success("Report generated successfully.")
+
+            except Exception as e:
+                ss["report_status"] = f"Report failed for {report_hex}"
+                st.error(f"Failed to generate report: {e}")
+                st.code(traceback.format_exc())
+
+    if "report_pdf" in ss and ss.get("report_hex") == report_hex:
         st.download_button(
             "📥 Download PDF",
-            data=st.session_state["report_pdf"],
+            data=ss["report_pdf"],
             file_name=f"biodiversity_report_{report_hex}.pdf",
             mime="application/pdf",
             key="download_report_btn",
@@ -2566,7 +2602,11 @@ def main() -> None:
     # ── Session state defaults ────────────────────────────────────────────────
     ss = st.session_state
     ss.setdefault("trigger_generate_report", False)
+    ss.setdefault("pending_report_hex", None)
     ss.setdefault("selected_cell", None)
+    ss.setdefault("report_pdf", None)
+    ss.setdefault("report_hex", None)
+    ss.setdefault("report_status", None)
     ss.setdefault("chosen_hexes", set())  # set of h3_index, max 6
     ss.setdefault(
         "last_processed_click", None

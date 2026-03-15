@@ -513,7 +513,7 @@ def render_landing():
       </div>
       <div class="nav-actions">
         <div class="btn">Login</div>
-        <a class="btn btn-primary nav-cta-link" href="?view=app">Request a demo</a>
+        <a class="btn btn-primary nav-cta-link" href="?view=app">Start Analysis</a>
       </div>
     </div>
 
