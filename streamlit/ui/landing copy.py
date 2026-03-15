@@ -6,12 +6,6 @@ from pathlib import Path
 import streamlit as st
 
 def render_landing():
-    query_params = st.query_params
-    if query_params.get("view") == "app":
-        st.session_state["route"] = "app"
-        st.query_params.clear()
-        st.rerun()
-    
     # --- Logo as base64 (OK because it's small) ---
     logo_path = Path(__file__).parent / "assets" / "logo_white.png"
     logo_b64 = ""
@@ -73,30 +67,6 @@ def render_landing():
     }}
     .navlinks a:hover {{
         background: rgba(255,255,255,0.06);
-        color: var(--text);
-    }}
-
-    .nav-cta-link {{
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-
-        text-decoration: none;
-        color: var(--text);
-
-        font-weight: 650;
-    }}
-
-    .nav-cta-link:visited {{
-        color: var(--text);
-    }}
-
-    .nav-cta-link:hover {{
-        color: var(--text);
-        text-decoration: none;
-    }}
-
-    .nav-cta-link:active {{
         color: var(--text);
     }}
 
@@ -513,7 +483,7 @@ def render_landing():
       </div>
       <div class="nav-actions">
         <div class="btn">Login</div>
-        <a class="btn btn-primary nav-cta-link" href="?view=app">Request a demo</a>
+        <div class="btn btn-primary">Start Analysis</div>
       </div>
     </div>
 

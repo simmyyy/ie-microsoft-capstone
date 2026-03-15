@@ -1,3 +1,4 @@
+#app.py
 """
 GBIF Biodiversity Explorer – Streamlit app
 ==========================================
